@@ -11,8 +11,8 @@ Panel izquierdo (clickeable con el mouse): conversaciones
   💬 <nodo>               -> mensaje directo (DM) a un solo nodo
 Escribí abajo y Enter para enviar.
 Teclas:  F2 sonido · F3 borrar historial · F4 nombres largos/cortos · F5 refrescar
-         F6/F7/F8 pantalla del nodo
-         F9 configuración completa del nodo · q/Ctrl+C salir
+         F6/F7/F8 pantalla del nodo · F9 configuración · F10 ★ favorito · q salir
+La lista se separa en 📻 RF y 🌐 MQTT (secciones plegables, se puede desactivar en F9).
 El historial se guarda solo en ~/.local/share/mesh-tui/history.json y se recarga al abrir.
 """
 import sys
@@ -59,7 +59,7 @@ if "--check" in sys.argv:
           "| meshtastic importado")
     sys.exit(0)
 
-VERSION = "1.3.0"
+VERSION = "1.4.0"
 UPDATE_URL = "https://raw.githubusercontent.com/Rama2551/battlemesh/main/mesh"
 
 ONLINE_SECS = 300      # se considera "online" si se lo escuchó hace < 5 min
@@ -251,6 +251,7 @@ def splash(port):
 # ============================ CONFIGURACIÓN DEL NODO ============================
 # Pestañas: (título, [(tipo, sección), ...])   tipo: "owner" | "config" | "module"
 CONFIG_TABS = [
+    ("🖥 Programa", [("app", "app")]),          # opciones locales de la PC
     ("👤 Identidad", [("owner", "owner")]),
     ("📡 LoRa",      [("config", "lora")]),
     ("🖥 Pantalla",  [("config", "display")]),
@@ -390,6 +391,9 @@ class ConfigScreen(Screen):
 
     def _build_sections(self, sections):
         for kind, section in sections:
+            if kind == "app":
+                yield from self._build_app_rows()
+                continue
             if kind == "owner":
                 yield Static("[b]Identidad del nodo[/b]")
                 for fname, label in (("long_name", "Nombre largo"), ("short_name", "Nombre corto")):
@@ -410,6 +414,35 @@ class ConfigScreen(Screen):
                     yield row
             if not any_field:
                 yield Static("(sin parámetros editables)", classes="empty-note")
+
+    def _build_app_rows(self):
+        """Opciones del programa (se guardan en la PC, no en el nodo, y se aplican al instante)."""
+        app = self.app
+        yield Static("[b]Preferencias de BATTLEMESH[/b]  [dim](se guardan en esta PC)[/dim]")
+        temas = sorted(app.available_themes.keys())
+        actual = app.theme_name if app.theme_name in temas else "textual-dark"
+        yield Horizontal(
+            Label("Tema de colores"),
+            Select([(t, t) for t in temas], value=actual, allow_blank=False, id="app-theme"),
+            Static("Apariencia de la interfaz", classes="help"), classes="row")
+        yield Horizontal(
+            Label("Separar por MQTT y RF"),
+            Switch(value=app.split_mqtt_rf, id="app-split"),
+            Static("Divide la lista en secciones desplegables", classes="help"), classes="row")
+        yield Horizontal(
+            Label("Sonido de notificación"),
+            Switch(value=app.sound_enabled, id="app-sound"),
+            Static("Avisa al recibir un mensaje (F2)", classes="help"), classes="row")
+        yield Horizontal(
+            Label("Nombres largos"),
+            Switch(value=app.long_names, id="app-names"),
+            Static("Nombre completo en vez de la sigla (F4)", classes="help"), classes="row")
+        favs = ", ".join(app.node_name(n, force_long=True) for n in app.favorites) or "(ninguno)"
+        yield Horizontal(
+            Label("★ Favoritos"),
+            Static(favs, classes="help"), classes="row")
+        yield Static("[dim]Los favoritos se marcan con F10 desde la conversación.[/dim]",
+                     classes="empty-note")
 
     def _key(self, section, fname):
         return f"{section}.{fname}"
@@ -461,9 +494,33 @@ class ConfigScreen(Screen):
 
     # ---------- básico / avanzado ----------
     def on_switch_changed(self, event: Switch.Changed):
-        if event.switch.id == "adv-switch":
+        sid = event.switch.id
+        if sid == "adv-switch":
             self.advanced = event.value
             self._apply_advanced()
+            return
+        app = self.app
+        if sid == "app-split":
+            app.split_mqtt_rf = event.value
+        elif sid == "app-sound":
+            app.sound_enabled = event.value
+            app.update_subtitle()
+        elif sid == "app-names":
+            app.long_names = event.value
+        else:
+            return                      # switch de configuración del nodo: se guarda con Ctrl+S
+        app.save_config()
+        app.rebuild_convos(preserve=True)
+
+    def on_select_changed(self, event: Select.Changed):
+        if event.select.id == "app-theme" and event.value:
+            app = self.app
+            app.theme_name = str(event.value)
+            try:
+                app.theme = app.theme_name
+            except Exception:
+                pass
+            app.save_config()
 
     def _apply_advanced(self):
         for row in self.query(".adv"):
@@ -628,7 +685,8 @@ class MeshApp(App):
         ("f6", "screen_prev", "Heltec ◀"),
         ("f7", "screen_next", "Heltec ▶"),
         ("f8", "screen_select", "Heltec OK"),
-        ("f9", "open_config", "Configurar nodo"),
+        ("f9", "open_config", "Configurar"),
+        ("f10", "toggle_favorite", "★ Favorito"),
         ("q", "quit", "Salir"),
     ]
 
@@ -649,6 +707,10 @@ class MeshApp(App):
         self._online_prev = set()
         self.rssi_cache = {}        # node_num -> RSSI del último paquete oído
         self.long_names = True      # F4: nombres largos o cortos
+        self.split_mqtt_rf = True   # separar la lista en secciones RF / MQTT
+        self.favorites = set()      # nodos marcados con estrella
+        self.collapsed = {}         # "rf"/"mqtt" -> True si la sección está plegada
+        self.theme_name = "textual-dark"
         self.load_config()
         self.load_history()
         self._rebuild_outbox()
@@ -666,18 +728,29 @@ class MeshApp(App):
 
     # ---------- persistencia ----------
     def load_config(self):
+        """Preferencias locales de la PC (no del nodo)."""
         try:
             cfg = json.loads(CONFIG_FILE.read_text())
             self.sound_enabled = bool(cfg.get("sound_enabled", True))
             self.long_names = bool(cfg.get("long_names", True))
+            self.split_mqtt_rf = bool(cfg.get("split_mqtt_rf", True))
+            self.favorites = set(int(x) for x in cfg.get("favorites", []))
+            self.collapsed = {k: bool(v) for k, v in (cfg.get("collapsed") or {}).items()}
+            self.theme_name = cfg.get("theme") or "textual-dark"
         except Exception:
             pass
 
     def save_config(self):
         try:
             DATA_DIR.mkdir(parents=True, exist_ok=True)
-            CONFIG_FILE.write_text(json.dumps({"sound_enabled": self.sound_enabled,
-                                               "long_names": self.long_names}))
+            CONFIG_FILE.write_text(json.dumps({
+                "sound_enabled": self.sound_enabled,
+                "long_names": self.long_names,
+                "split_mqtt_rf": self.split_mqtt_rf,
+                "favorites": sorted(self.favorites),
+                "collapsed": self.collapsed,
+                "theme": self.theme_name,
+            }, ensure_ascii=False))
         except Exception:
             pass
 
@@ -756,6 +829,21 @@ class MeshApp(App):
             return self.my_name
         return f"!{num:08x}"
 
+    def node_is_mqtt(self, num):
+        """True si al nodo lo conocemos por el puente de internet (no por radio)."""
+        n = self._node_rec(num) or {}
+        return bool(n.get("viaMqtt"))
+
+    def sort_nodes(self, nums):
+        """Favoritos primero, después los activos, y el resto por visto más reciente."""
+        def clave(num):
+            st = self.node_status(num)
+            fav = 0 if num in self.favorites else 1
+            activo = 0 if st["state"] == "online" else 1
+            edad = st["age"] if st["age"] is not None else float("inf")
+            return (fav, activo, edad, self.node_name(num, force_long=True).lower())
+        return sorted(nums, key=clave)
+
     def node_status(self, num):
         """Estado de un nodo: presencia, señal y antigüedad."""
         n = self._node_rec(num) or {}
@@ -832,13 +920,21 @@ class MeshApp(App):
             idx = key[1]
             name = dict(self.channel_list()).get(idx, f"Canal {idx}")
             base = f"📢 {name}" + ("" if idx == 0 else f" (c{idx})")
+        elif key[0] == "hdr":
+            grupo = key[1]
+            abierto = not self.collapsed.get(grupo, False)
+            flecha = "▼" if abierto else "▶"
+            titulo = "📻 Por radio (RF)" if grupo == "rf" else "🌐 Por internet (MQTT)"
+            n = len(self._group_nodes(grupo))
+            return f"[b]{flecha} {titulo}[/]  [dim]({n})[/]"
         else:
             num = key[1]
             dot, bars, st = self.node_signal_markup(num)
             name = self.node_name(num)
             if st["state"] == "offline":
                 name = f"[dim]{name}[/]"
-            base = f"{dot} {name}  {bars}"
+            estrella = "[b yellow]★[/] " if num in self.favorites else ""
+            base = f"{dot} {estrella}{name}  {bars}"
         u = self.unread.get(key, 0)
         if u and key != self.current:
             base += f"  [b yellow]({u})[/]"
@@ -860,6 +956,11 @@ class MeshApp(App):
 
     def on_mount(self):
         self.title = "BATTLEMESH"
+        try:
+            if self.theme_name in self.available_themes:
+                self.theme = self.theme_name      # tema elegido, recordado entre sesiones
+        except Exception:
+            pass
         self.update_subtitle()
         self.rebuild_convos()
         pub.subscribe(self._on_text_thread, "meshtastic.receive.text")
@@ -876,24 +977,47 @@ class MeshApp(App):
         snd = "🔔" if self.sound_enabled else "🔕"
         self.sub_title = f"{self.my_name}   {snd}"
 
-    def _compute_order(self):
-        """Lista de conversaciones (canales + nodos), aplicando el filtro de búsqueda."""
+    def _visible_nodes(self):
+        """Nodos que pasan el filtro de búsqueda."""
         ft = self.filter_text
-        order = []
-        for idx, name in self.channel_list():
-            if not ft or ft in name.lower():
-                order.append(("ch", idx))
+        out = []
         try:
             for n in list(self.iface.nodes.values()):
                 num = n.get("num")
                 if num is None or num == self.my_num:
                     continue
-                if not ft or ft in self.node_name(num).lower():
-                    order.append(("dm", num))
+                if not ft or ft in self.node_name(num, force_long=True).lower() \
+                        or ft in self.node_name(num).lower():
+                    out.append(num)
         except Exception:
             pass
-        if self.current not in order:   # no perder la conversación abierta
-            order.append(self.current)
+        return out
+
+    def _group_nodes(self, grupo):
+        """Nodos de un grupo ('rf' o 'mqtt'), ya ordenados."""
+        nums = [n for n in self._visible_nodes()
+                if self.node_is_mqtt(n) == (grupo == "mqtt")]
+        return self.sort_nodes(nums)
+
+    def _compute_order(self):
+        """Conversaciones a mostrar: canales, y nodos (separados o no en secciones)."""
+        ft = self.filter_text
+        order = []
+        for idx, name in self.channel_list():
+            if not ft or ft in name.lower():
+                order.append(("ch", idx))
+        if self.split_mqtt_rf:
+            for grupo in ("rf", "mqtt"):
+                nodos = self._group_nodes(grupo)
+                if not nodos:
+                    continue
+                order.append(("hdr", grupo))          # encabezado plegable
+                if not self.collapsed.get(grupo, False):
+                    order.extend(("dm", n) for n in nodos)
+        else:
+            order.extend(("dm", n) for n in self.sort_nodes(self._visible_nodes()))
+        if self.current not in order and self.current[0] != "hdr":
+            order.append(self.current)                # no perder la conversación abierta
         return order
 
     def rebuild_convos(self, preserve=False):
@@ -916,8 +1040,15 @@ class MeshApp(App):
     # ---------- seleccion ----------
     def on_list_view_selected(self, event: ListView.Selected):
         item = event.item
-        if isinstance(item, ConvoItem):
-            self.select_convo(item.key)
+        if not isinstance(item, ConvoItem):
+            return
+        if item.key[0] == "hdr":                 # clic en el encabezado: plegar/desplegar
+            grupo = item.key[1]
+            self.collapsed[grupo] = not self.collapsed.get(grupo, False)
+            self.save_config()
+            self.rebuild_convos(preserve=True)
+            return
+        self.select_convo(item.key)
 
     def select_convo(self, key):
         self.current = key
@@ -1181,6 +1312,30 @@ class MeshApp(App):
 
     def action_screen_select(self):
         self._send_input_event(INPUT_SELECT, "OK / entrar")
+
+    def action_toggle_favorite(self):
+        """F10: marca o desmarca con estrella el nodo de la conversación actual."""
+        if self.current[0] != "dm":
+            self.notify("Elegí primero una conversación con un nodo")
+            return
+        num = self.current[1]
+        nombre = self.node_name(num, force_long=True)
+        if num in self.favorites:
+            self.favorites.discard(num)
+            self.notify(f"☆ {nombre} ya no es favorito")
+        else:
+            self.favorites.add(num)
+            self.notify(f"★ {nombre} agregado a favoritos")
+        self.save_config()
+        self.rebuild_convos(preserve=True)
+
+    def action_toggle_split(self):
+        """Activa o desactiva la separación de la lista en RF y MQTT."""
+        self.split_mqtt_rf = not self.split_mqtt_rf
+        self.save_config()
+        self.rebuild_convos(preserve=True)
+        self.notify("Lista separada por RF y MQTT" if self.split_mqtt_rf
+                    else "Lista unificada (sin separar)")
 
     def action_toggle_names(self):
         """F4: alterna entre nombres largos ('Aliencool') y cortos ('alie')."""

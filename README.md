@@ -35,6 +35,9 @@ internet para funcionar.
 - 📮 **Reenvío automático**: los DM que no llegan quedan en cola y se reintentan
   solos cuando el nodo destino vuelve a estar en línea (sobrevive a reinicios).
 - 🔎 **Buscador de nodos** por nombre, pensado para redes con muchos nodos.
+- 📻🌐 **Lista separada en RF y MQTT**, en secciones plegables, con **favoritos ★**
+  y orden por actividad.
+- 🎨 **21 temas de color**, y todas las preferencias guardadas en tu PC.
 - 📶 **Presencia y calidad de enlace**: indicador de en línea / ausente y marcador
   de señal con SNR y RSSI en dB, como en la app del teléfono.
 - 🔔 **Sonido de notificación** al recibir, activable/desactivable.
@@ -51,7 +54,7 @@ internet para funcionar.
 ### Opción A — paquete `.deb` (Debian / Ubuntu / Linux Mint)
 
 ```bash
-sudo apt install ./battlemesh_1.3.0_all.deb
+sudo apt install ./battlemesh_1.4.0_all.deb
 ```
 
 Deja el comando `battlemesh` en el sistema y una entrada en el menú.
@@ -91,8 +94,8 @@ Si ya estás al día, no hace nada.
 > git pull
 >
 > # si instalaste el .deb
-> curl -fsSLO https://raw.githubusercontent.com/Rama2551/battlemesh/main/battlemesh_1.3.0_all.deb
-> sudo apt install ./battlemesh_1.3.0_all.deb
+> curl -fsSLO https://raw.githubusercontent.com/Rama2551/battlemesh/main/battlemesh_1.4.0_all.deb
+> sudo apt install ./battlemesh_1.4.0_all.deb
 > ```
 
 ### Otros comandos
@@ -132,15 +135,18 @@ battlemesh /dev/ttyUSB1   # forzar un puerto concreto
 | `F5` | Refrescar la lista de nodos |
 | `F6` / `F7` | Cambiar la pantalla del nodo: ◀ anterior / ▶ siguiente |
 | `F8` | OK / entrar en la pantalla del nodo |
-| `F9` | **Configuración del nodo** (pestañas, básico/avanzado) |
+| `F9` | **Configuración** (opciones del programa + del nodo) |
+| `F10` | Marcar/desmarcar el nodo actual como **favorito ★** |
 | `q` / `Ctrl+C` | Salir |
 
-## Configuración del nodo (`F9`)
+## Configuración (`F9`)
 
-Abre un panel con **toda** la configuración de Meshtastic, organizada en pestañas:
+Abre un panel en pestañas con las opciones **del programa** y **toda** la
+configuración del nodo:
 
 | Pestaña | Contenido |
 |---|---|
+| 🖥 **Programa** | **Tema de colores**, separar RF/MQTT, sonido, nombres largos, favoritos |
 | 👤 Identidad | Nombre largo y corto del nodo |
 | 📡 LoRa | Región, preset de módem, saltos, potencia, frecuencia… |
 | 🖥 Pantalla | Tiempo encendida, carrusel, unidades, orientación… |
@@ -160,6 +166,26 @@ Abre un panel con **toda** la configuración de Meshtastic, organizada en pesta�
   y **no escribe nada** en el nodo.
 - Guarda **solo lo que cambiaste** (`Ctrl+S` o el botón *Guardar*); las demás
   secciones quedan intactas. Tras guardar, el nodo se reinicia unos segundos.
+- Las opciones de la pestaña **🖥 Programa** se aplican al instante y **no tocan
+  el nodo**: son preferencias tuyas y se guardan en esta PC.
+
+## Lista de nodos: RF, MQTT y favoritos
+
+Los nodos se agrupan en dos secciones **plegables** (clic en el encabezado), que
+pueden estar **abiertas a la vez**:
+
+| Sección | Qué contiene |
+|---|---|
+| 📻 **Por radio (RF)** | Nodos que tu equipo escucha directamente por LoRa |
+| 🌐 **Por internet (MQTT)** | Nodos que llegan por el puente MQTT, fuera del alcance de tu radio |
+
+La separación se puede **desactivar** desde `F9` → 🖥 Programa → *Separar por MQTT
+y RF*; con ella apagada, todos los nodos aparecen en una única lista.
+
+**Orden de la lista** (siempre): primero los **favoritos ★**, después los que
+están **en línea**, y el resto por **última vez visto**.
+
+Para marcar un favorito: abrí la conversación con ese nodo y apretá **`F10`**.
 
 ### Presencia y señal de los nodos
 
@@ -199,7 +225,7 @@ lo retransmitió), no que cada integrante lo haya leído.
 | Archivo | Contenido |
 |---|---|
 | `~/.local/share/mesh-tui/history.json` | Historial de conversaciones |
-| `~/.local/share/mesh-tui/config.json` | Preferencias (sonido, nombres largos/cortos) |
+| `~/.local/share/mesh-tui/config.json` | Preferencias: tema, separación RF/MQTT, favoritos, secciones plegadas, sonido y nombres |
 | `~/.local/share/mesh-tui/venv/` | Entorno con las dependencias |
 
 Para borrar todo el historial de una: eliminá `history.json`.

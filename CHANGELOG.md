@@ -1,5 +1,16 @@
 # Historial de versiones
 
+## 1.4.0
+
+- **Lista separada en 📻 RF y 🌐 MQTT**, en secciones plegables que pueden estar
+  abiertas a la vez. Se activa o desactiva desde `F9` → 🖥 Programa.
+- **Favoritos ★** con `F10`: quedan siempre arriba de la lista.
+- **Orden**: favoritos, luego los nodos en línea, y el resto por última vez visto.
+- Nueva pestaña **🖥 Programa** en `F9` con las preferencias locales.
+- **21 temas de color** a elección.
+- Todo (tema, separación, favoritos, secciones plegadas, sonido y nombres) se
+  guarda en la PC y se recupera al abrir.
+
 ## 1.3.0
 
 - **Autoactualización**: `battlemesh --update` descarga e instala la última
