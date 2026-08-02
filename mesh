@@ -10,7 +10,8 @@ Panel izquierdo (clickeable con el mouse): conversaciones
   📢 Broadcast / canales  -> mensajes a todo un grupo
   💬 <nodo>               -> mensaje directo (DM) a un solo nodo
 Escribí abajo y Enter para enviar.
-Teclas:  F2 sonido on/off · F3 borrar historial de la conversación · F5 refrescar · q/Ctrl+C salir
+Teclas:  F2 sonido · F3 borrar historial · F5 refrescar · F6/F7/F8 pantalla del nodo
+         F9 configuración completa del nodo · q/Ctrl+C salir
 El historial se guarda solo en ~/.local/share/mesh-tui/history.json y se recarga al abrir.
 """
 import sys
@@ -73,9 +74,16 @@ except Exception:
     except Exception:
         admin_pb2 = None
 
+try:
+    from meshtastic.protobuf import config_pb2, module_config_pb2
+except Exception:
+    config_pb2 = module_config_pb2 = None
+
 from textual.app import App, ComposeResult
-from textual.containers import Horizontal, Vertical
-from textual.widgets import Header, Footer, Input, RichLog, ListView, ListItem, Label, Static
+from textual.screen import Screen
+from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.widgets import (Header, Footer, Input, RichLog, ListView, ListItem, Label, Static,
+                             TabbedContent, TabPane, Switch, Select, Button)
 
 # Códigos de evento de entrada del firmware (para controlar la pantalla del Heltec remotamente)
 INPUT_UP, INPUT_DOWN, INPUT_LEFT, INPUT_RIGHT, INPUT_SELECT = 17, 18, 19, 20, 10
@@ -120,6 +128,335 @@ def splash(port):
         sys.stdout.flush()
     except Exception:
         print(f"BATTLEMESH - conectando en {port} ...")
+
+
+# ============================ CONFIGURACIÓN DEL NODO ============================
+# Pestañas: (título, [(tipo, sección), ...])   tipo: "owner" | "config" | "module"
+CONFIG_TABS = [
+    ("👤 Identidad", [("owner", "owner")]),
+    ("📡 LoRa",      [("config", "lora")]),
+    ("🖥 Pantalla",  [("config", "display")]),
+    ("🔵 Bluetooth", [("config", "bluetooth")]),
+    ("⚙ Dispositivo", [("config", "device")]),
+    ("📍 Posición",  [("config", "position")]),
+    ("🔋 Energía",   [("config", "power")]),
+    ("🌐 Red",       [("config", "network")]),
+    ("🔒 Seguridad", [("config", "security")]),
+    ("🧩 Módulos",   [("module", m) for m in (
+        "mqtt", "telemetry", "store_forward", "range_test", "neighbor_info",
+        "canned_message", "external_notification", "serial", "detection_sensor",
+        "ambient_lighting", "paxcounter", "audio", "remote_hardware")]),
+]
+
+# Campos visibles en modo BÁSICO (el resto sólo aparece con el switch "Avanzado")
+BASIC_FIELDS = {
+    "owner.long_name", "owner.short_name",
+    "lora.region", "lora.modem_preset", "lora.hop_limit", "lora.tx_enabled", "lora.tx_power",
+    "display.screen_on_secs", "display.auto_screen_carousel_secs", "display.units",
+    "display.flip_screen", "display.use_12h_clock",
+    "bluetooth.enabled", "bluetooth.mode", "bluetooth.fixed_pin",
+    "device.role", "device.node_info_broadcast_secs",
+    "position.gps_enabled", "position.fixed_position", "position.position_broadcast_secs",
+    "power.is_power_saving",
+    "network.wifi_enabled", "network.wifi_ssid", "network.wifi_psk",
+}
+
+# Largos máximos que impone el firmware (en caracteres)
+STR_LIMITS = {
+    "owner.long_name": 39, "owner.short_name": 4,
+    "device.tzdef": 64,
+    "network.wifi_ssid": 32, "network.wifi_psk": 64,
+    "network.ntp_server": 32, "network.rsyslog_server": 32,
+    "mqtt.address": 63, "mqtt.username": 63, "mqtt.password": 63, "mqtt.root": 31,
+    "canned_message.allow_input_source": 15,
+    "external_notification.ringtone": 230,
+    "security.admin_key": 0,
+}
+
+# Ayudas cortas para los campos más importantes
+FIELD_HELP = {
+    "owner.long_name": "Nombre visible del nodo",
+    "owner.short_name": "Sigla de 4 caracteres",
+    "lora.region": "Banda legal de tu país (¡obligatorio!)",
+    "lora.modem_preset": "Alcance vs velocidad",
+    "lora.hop_limit": "Saltos máximos (1-7)",
+    "lora.tx_power": "Potencia en dBm (0 = automático)",
+    "display.screen_on_secs": "Segundos que queda encendida la pantalla",
+    "display.auto_screen_carousel_secs": "Rotar pantallas cada N seg (0 = no)",
+    "bluetooth.fixed_pin": "PIN de 6 dígitos para emparejar",
+    "device.role": "Rol del nodo en la malla",
+}
+
+NUM_TYPES = {"uint32", "int32", "uint64", "int64", "float", "double", "fixed32", "sfixed32"}
+
+
+def pb_type_name(f):
+    """Nombre legible del tipo de un campo protobuf."""
+    from google.protobuf.descriptor import FieldDescriptor as FD
+    return {FD.TYPE_BOOL: "bool", FD.TYPE_STRING: "string", FD.TYPE_ENUM: "enum",
+            FD.TYPE_UINT32: "uint32", FD.TYPE_INT32: "int32", FD.TYPE_UINT64: "uint64",
+            FD.TYPE_INT64: "int64", FD.TYPE_FLOAT: "float", FD.TYPE_DOUBLE: "double",
+            FD.TYPE_FIXED32: "fixed32", FD.TYPE_SFIXED32: "sfixed32",
+            FD.TYPE_MESSAGE: "message", FD.TYPE_BYTES: "bytes"}.get(f.type, "otro")
+
+
+def section_descriptor(kind, section):
+    """Descriptor protobuf de una sección de configuración."""
+    if config_pb2 is None:
+        return None
+    try:
+        if kind == "config":
+            return config_pb2.Config.DESCRIPTOR.fields_by_name[section].message_type
+        if kind == "module":
+            return module_config_pb2.ModuleConfig.DESCRIPTOR.fields_by_name[section].message_type
+    except Exception:
+        return None
+    return None
+
+
+class ConfigScreen(Screen):
+    """Panel de configuración completo del nodo, en pestañas."""
+
+    CSS = """
+    #cfg-top { height: 3; padding: 0 1; background: $accent; color: $text; }
+    #cfg-top Label { padding: 1 2 0 0; }
+    .row { height: 3; padding: 0 1; }
+    .row Label { width: 34; padding: 1 1 0 0; }
+    .row Input, .row Select { width: 42; }
+    .row Switch { width: 12; }
+    .help { color: $text-muted; padding: 1 0 0 1; }
+    .adv-hidden { display: none; }
+    #cfg-buttons { height: 3; align: center middle; padding: 0 1; }
+    #cfg-buttons Button { margin: 0 1; }
+    .empty-note { padding: 1 2; color: $text-muted; }
+    """
+
+    BINDINGS = [("escape", "cancel", "Cerrar"), ("ctrl+s", "save", "Guardar")]
+
+    def __init__(self, iface):
+        super().__init__()
+        self.iface = iface
+        self.advanced = False
+        self.widgets = {}     # "sec.campo" -> (kind, section, field_descriptor, widget)
+        self.originals = {}   # "sec.campo" -> valor original
+
+    # ---------- lectura de la config actual del aparato ----------
+    def _local(self):
+        return self.iface.localNode
+
+    def current_value(self, kind, section, fname):
+        try:
+            if kind == "owner":
+                u = self.iface.getMyNodeInfo().get("user", {})
+                return u.get("longName" if fname == "long_name" else "shortName", "") or ""
+            node = self._local()
+            root = node.localConfig if kind == "config" else node.moduleConfig
+            return getattr(getattr(root, section), fname)
+        except Exception:
+            return None
+
+    def compose(self) -> ComposeResult:
+        yield Header()
+        with Horizontal(id="cfg-top"):
+            yield Label("Modo avanzado (muestra todos los parámetros)")
+            yield Switch(value=False, id="adv-switch")
+        with TabbedContent():
+            for title, sections in CONFIG_TABS:
+                with TabPane(title):
+                    with VerticalScroll():
+                        yield from self._build_sections(sections)
+        with Horizontal(id="cfg-buttons"):
+            yield Button("💾 Guardar cambios", variant="success", id="btn-save")
+            yield Button("Cancelar", variant="default", id="btn-cancel")
+        yield Footer()
+
+    def _build_sections(self, sections):
+        for kind, section in sections:
+            if kind == "owner":
+                yield Static("[b]Identidad del nodo[/b]")
+                for fname, label in (("long_name", "Nombre largo"), ("short_name", "Nombre corto")):
+                    yield from self._build_owner_row(fname, label)
+                continue
+            desc = section_descriptor(kind, section)
+            if desc is None:
+                continue
+            yield Static(f"[b]{section}[/b]")
+            any_field = False
+            for f in desc.fields:
+                t = pb_type_name(f)
+                if t in ("message", "bytes") or getattr(f, "is_repeated", False):
+                    continue          # estructuras complejas: no editables acá
+                row = self._build_row(kind, section, f, t)
+                if row is not None:
+                    any_field = True
+                    yield row
+            if not any_field:
+                yield Static("(sin parámetros editables)", classes="empty-note")
+
+    def _key(self, section, fname):
+        return f"{section}.{fname}"
+
+    def _build_owner_row(self, fname, label):
+        key = self._key("owner", fname)
+        val = self.current_value("owner", "owner", fname) or ""
+        limit = STR_LIMITS.get(key)
+        w = Input(value=str(val), max_length=limit or 0, id=f"w-{key.replace('.', '-')}")
+        self.widgets[key] = ("owner", "owner", fname, w)
+        self.originals[key] = val
+        classes = "row" if key in BASIC_FIELDS else "row adv"
+        help_txt = FIELD_HELP.get(key, "")
+        lbl = f"{label}" + (f"  [dim](máx {limit})[/dim]" if limit else "")
+        row = Horizontal(Label(lbl), w, Static(help_txt, classes="help"), classes=classes)
+        yield row
+
+    def _build_row(self, kind, section, f, t):
+        key = self._key(section, f.name)
+        val = self.current_value(kind, section, f.name)
+        if val is None:
+            return None
+        self.originals[key] = val
+        wid = f"w-{key.replace('.', '-').replace('_', '-')}"
+        if t == "bool":
+            w = Switch(value=bool(val), id=wid)
+        elif t == "enum":
+            opts = [(v.name, v.number) for v in f.enum_type.values]
+            try:
+                w = Select(opts, value=int(val), allow_blank=False, id=wid)
+            except Exception:
+                w = Select(opts, allow_blank=True, id=wid)
+        else:
+            limit = STR_LIMITS.get(key)
+            w = Input(value="" if val is None else str(val),
+                      max_length=limit or 0,
+                      type="number" if t in NUM_TYPES else "text",
+                      id=wid)
+        self.widgets[key] = (kind, section, f.name, w)
+        classes = "row" if key in BASIC_FIELDS else "row adv"
+        help_txt = FIELD_HELP.get(key, "")
+        limit = STR_LIMITS.get(key)
+        lbl = f.name + (f"  [dim](máx {limit})[/dim]" if limit else "")
+        return Horizontal(Label(lbl), w, Static(help_txt, classes="help"), classes=classes)
+
+    def on_mount(self):
+        self.title = "BATTLEMESH · Configuración del nodo"
+        self._apply_advanced()
+
+    # ---------- básico / avanzado ----------
+    def on_switch_changed(self, event: Switch.Changed):
+        if event.switch.id == "adv-switch":
+            self.advanced = event.value
+            self._apply_advanced()
+
+    def _apply_advanced(self):
+        for row in self.query(".adv"):
+            row.display = self.advanced
+
+    # ---------- guardar ----------
+    def _widget_value(self, w, t):
+        if isinstance(w, Switch):
+            return bool(w.value)
+        if isinstance(w, Select):
+            return int(w.value) if w.value is not None else None
+        txt = w.value.strip()
+        if t in NUM_TYPES:
+            if txt == "":
+                return None
+            return float(txt) if t in ("float", "double") else int(float(txt))
+        return txt
+
+    def collect_changes(self):
+        """Devuelve [(kind, section, field, valor)] de lo que el usuario modificó."""
+        changes = []
+        for key, (kind, section, fname, w) in self.widgets.items():
+            if kind == "owner":
+                t = "string"
+            else:
+                desc = section_descriptor(kind, section)
+                fd = desc.fields_by_name[fname]
+                t = pb_type_name(fd)
+            try:
+                new = self._widget_value(w, t)
+            except Exception:
+                continue
+            if new is None:
+                continue
+            old = self.originals.get(key)
+            if isinstance(old, float) or isinstance(new, float):
+                same = abs(float(old or 0) - float(new)) < 1e-9
+            else:
+                same = str(old) == str(new)
+            if not same:
+                changes.append((kind, section, fname, new, key))
+        return changes
+
+    def validate(self, changes):
+        """Chequea límites (largo de texto) antes de escribir nada."""
+        errors = []
+        for kind, section, fname, val, key in changes:
+            limit = STR_LIMITS.get(key)
+            if limit and isinstance(val, str) and len(val) > limit:
+                errors.append(f"«{key}» supera el máximo de {limit} caracteres")
+            if key == "owner.long_name" and not val:
+                errors.append("El nombre largo no puede quedar vacío")
+            if key == "owner.short_name" and not val:
+                errors.append("El nombre corto no puede quedar vacío")
+            if key == "bluetooth.fixed_pin" and isinstance(val, int) and not (0 <= val <= 999999):
+                errors.append("El PIN debe tener 6 dígitos (0-999999)")
+            if key == "lora.hop_limit" and isinstance(val, int) and not (1 <= val <= 7):
+                errors.append("hop_limit debe estar entre 1 y 7")
+        return errors
+
+    def action_save(self):
+        self._save()
+
+    def action_cancel(self):
+        self.app.pop_screen()
+
+    def on_button_pressed(self, event: Button.Pressed):
+        if event.button.id == "btn-save":
+            self._save()
+        else:
+            self.app.pop_screen()
+
+    def _save(self):
+        changes = self.collect_changes()
+        if not changes:
+            self.notify("No hay cambios para guardar")
+            return
+        errors = self.validate(changes)
+        if errors:
+            self.notify("⚠ " + " · ".join(errors[:3]), severity="error", timeout=8)
+            return
+        node = self._local()
+        touched, owner = set(), {}
+        try:
+            try:
+                node.beginSettingsTransaction()
+            except Exception:
+                pass
+            for kind, section, fname, val, key in changes:
+                if kind == "owner":
+                    owner[fname] = val
+                    continue
+                root = node.localConfig if kind == "config" else node.moduleConfig
+                setattr(getattr(root, section), fname, val)
+                touched.add(section)
+            for section in touched:
+                node.writeConfig(section)
+            try:
+                node.commitSettingsTransaction()
+            except Exception:
+                pass
+            if owner:
+                node.setOwner(long_name=owner.get("long_name"),
+                              short_name=owner.get("short_name"))
+            n = len(changes)
+            self.notify(f"✅ {n} cambio(s) guardado(s). El nodo se reinicia unos segundos.",
+                        timeout=8)
+            for kind, section, fname, val, key in changes:
+                self.originals[key] = val
+        except Exception as e:
+            self.notify(f"Error al guardar: {e}", severity="error", timeout=10)
 
 
 class ConvoItem(ListItem):
@@ -172,6 +509,7 @@ class MeshApp(App):
         ("f6", "screen_prev", "Heltec ◀"),
         ("f7", "screen_next", "Heltec ▶"),
         ("f8", "screen_select", "Heltec OK"),
+        ("f9", "open_config", "Configurar nodo"),
         ("q", "quit", "Salir"),
     ]
 
@@ -596,6 +934,16 @@ class MeshApp(App):
     def action_refresh_nodes(self):
         self.rebuild_convos()
         self.notify("Lista de nodos refrescada")
+
+    def action_open_config(self):
+        """Abre el panel de configuración del nodo (F9)."""
+        if config_pb2 is None:
+            self.notify("No pude cargar los protobuf de configuración", severity="error")
+            return
+        try:
+            self.push_screen(ConfigScreen(self.iface))
+        except Exception as e:
+            self.notify(f"No pude abrir la configuración: {e}", severity="error")
 
     # ---------- control remoto de la pantalla del Heltec ----------
     def _send_input_event(self, code, label=""):

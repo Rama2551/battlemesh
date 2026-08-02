@@ -39,6 +39,9 @@ internet para funcionar.
 - 📝 **Historial persistente** por conversación, con borrado individual.
 - 🖥 **Control remoto de la pantalla del nodo**: cambiá de pantalla en el OLED
   desde la PC, sin usar el botón físico.
+- ⚙️ **Configuración completa del nodo** (`F9`): todos los parámetros de Meshtastic
+  organizados en pestañas, con modo **Básico/Avanzado**, carga de la configuración
+  actual del aparato y validación de los límites del firmware.
 - 🔌 **Autodetección**: encuentra la placa LoRa en cualquier puerto USB.
 
 ## Instalación
@@ -46,7 +49,7 @@ internet para funcionar.
 ### Opción A — paquete `.deb` (Debian / Ubuntu / Linux Mint)
 
 ```bash
-sudo apt install ./battlemesh_1.0.0_all.deb
+sudo apt install ./battlemesh_1.1.0_all.deb
 ```
 
 Deja el comando `battlemesh` en el sistema y una entrada en el menú.
@@ -90,7 +93,34 @@ battlemesh /dev/ttyUSB1   # forzar un puerto concreto
 | `F5` | Refrescar la lista de nodos |
 | `F6` / `F7` | Cambiar la pantalla del nodo: ◀ anterior / ▶ siguiente |
 | `F8` | OK / entrar en la pantalla del nodo |
+| `F9` | **Configuración del nodo** (pestañas, básico/avanzado) |
 | `q` / `Ctrl+C` | Salir |
+
+## Configuración del nodo (`F9`)
+
+Abre un panel con **toda** la configuración de Meshtastic, organizada en pestañas:
+
+| Pestaña | Contenido |
+|---|---|
+| 👤 Identidad | Nombre largo y corto del nodo |
+| 📡 LoRa | Región, preset de módem, saltos, potencia, frecuencia… |
+| 🖥 Pantalla | Tiempo encendida, carrusel, unidades, orientación… |
+| 🔵 Bluetooth | Activación, modo de PIN, PIN fijo |
+| ⚙ Dispositivo | Rol, rebroadcast, botones, zona horaria… |
+| 📍 Posición | GPS, posición fija, intervalos de emisión |
+| 🔋 Energía | Ahorro, tiempos de sueño, batería |
+| 🌐 Red | WiFi, Ethernet, NTP, syslog |
+| 🔒 Seguridad | Claves y permisos de administración |
+| 🧩 Módulos | MQTT, telemetría, store&forward, canned messages, sensores… |
+
+- **Al abrirlo carga la configuración que el aparato tiene en ese momento.**
+- El switch **«Modo avanzado»** alterna entre los parámetros de uso corriente y
+  la totalidad de los campos (~180).
+- **Respeta los límites del firmware**: por ejemplo, el nombre corto admite hasta
+  4 caracteres y el `hop_limit` debe estar entre 1 y 7. Si algo no cumple, avisa
+  y **no escribe nada** en el nodo.
+- Guarda **solo lo que cambiaste** (`Ctrl+S` o el botón *Guardar*); las demás
+  secciones quedan intactas. Tras guardar, el nodo se reinicia unos segundos.
 
 ### Marcas de entrega
 
