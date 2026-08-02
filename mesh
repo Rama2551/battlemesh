@@ -59,7 +59,7 @@ if "--check" in sys.argv:
           "| meshtastic importado")
     sys.exit(0)
 
-VERSION = "1.4.2"
+VERSION = "1.4.3"
 UPDATE_URL = "https://raw.githubusercontent.com/Rama2551/battlemesh/main/mesh"
 
 ONLINE_SECS = 300      # se considera "online" si se lo escuchó hace < 5 min
@@ -706,6 +706,7 @@ class MeshApp(App):
         self.outbox = {}            # node_num -> [rec,...] no entregados (reenvio al volver online)
         self._online_prev = set()
         self.rssi_cache = {}        # node_num -> RSSI del último paquete oído
+        self.heard_cache = {}       # node_num -> cuándo le oímos algo (cualquier paquete)
         self.long_names = True      # F4: nombres largos o cortos
         self.split_mqtt_rf = True   # separar la lista en secciones RF / MQTT
         self.favorites = set()      # nodos marcados con estrella
@@ -830,9 +831,16 @@ class MeshApp(App):
         return f"!{num:08x}"
 
     def node_is_mqtt(self, num):
-        """True si al nodo lo conocemos por el puente de internet (no por radio)."""
+        """True si al nodo NO lo escuchamos por radio.
+
+        Va a la sección de radio sólo si de verdad lo oímos alguna vez; los que
+        figuran en la base sin contacto propio se agrupan con los de internet.
+        """
         n = self._node_rec(num) or {}
-        return bool(n.get("viaMqtt"))
+        if n.get("viaMqtt"):
+            return True
+        oido = n.get("lastHeard") or self.heard_cache.get(num)
+        return not oido
 
     def sort_nodes(self, nums):
         """Favoritos primero, después los activos, y el resto por visto más reciente."""
@@ -850,7 +858,8 @@ class MeshApp(App):
         snr = n.get("snr")
         rssi = self.rssi_cache.get(num, n.get("rssi"))
         hops = n.get("hopsAway")
-        last = n.get("lastHeard")
+        # el más reciente entre lo que dice la base de nodos y lo que oímos nosotros
+        last = max(filter(None, (n.get("lastHeard"), self.heard_cache.get(num))), default=None)
         age = (time.time() - last) if last else None
         if age is None:
             state = "unknown"
@@ -1288,8 +1297,12 @@ class MeshApp(App):
         try:
             frm = packet.get("from")
             rssi = packet.get("rxRssi")
-            if frm is not None and rssi:
-                self.rssi_cache[frm] = rssi
+            if frm is not None:
+                # cualquier paquete prueba que lo estamos escuchando ahora, aunque
+                # el nodo no haya vuelto a anunciar su identidad
+                self.heard_cache[frm] = time.time()
+                if rssi:
+                    self.rssi_cache[frm] = rssi
             dec = packet.get("decoded") or {}
             rid = dec.get("requestId")
             if rid is not None and dec.get("portnum") == "ROUTING_APP":

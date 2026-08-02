@@ -54,7 +54,7 @@ internet para funcionar.
 ### Opción A — paquete `.deb` (Debian / Ubuntu / Linux Mint)
 
 ```bash
-sudo apt install ./battlemesh_1.4.2_all.deb
+sudo apt install ./battlemesh_1.4.3_all.deb
 ```
 
 Deja el comando `battlemesh` en el sistema y una entrada en el menú.
@@ -94,8 +94,8 @@ Si ya estás al día, no hace nada.
 > git pull
 >
 > # si instalaste el .deb
-> curl -fsSLO https://raw.githubusercontent.com/Rama2551/battlemesh/main/battlemesh_1.4.2_all.deb
-> sudo apt install ./battlemesh_1.4.2_all.deb
+> curl -fsSLO https://raw.githubusercontent.com/Rama2551/battlemesh/main/battlemesh_1.4.3_all.deb
+> sudo apt install ./battlemesh_1.4.3_all.deb
 > ```
 
 ### Otros comandos
@@ -176,8 +176,11 @@ pueden estar **abiertas a la vez**:
 
 | Sección | Qué contiene |
 |---|---|
-| 📻 **Por radio (RF)** | Nodos que tu equipo escucha directamente por LoRa |
-| 🌐 **Por internet (MQTT)** | Nodos que llegan por el puente MQTT, fuera del alcance de tu radio |
+| 📻 **Por radio (RF)** | Nodos que tu equipo **escuchó de verdad** por LoRa |
+| 🌐 **Por internet (MQTT)** | Nodos que llegan por el puente, y los que figuran en la base sin contacto propio |
+
+La presencia se calcula con **cualquier paquete** recibido de ese nodo, no sólo
+con sus anuncios de identidad: si alguien te escribe, pasa a *en línea* al toque.
 
 La separación se puede **desactivar** desde `F9` → 🖥 Programa → *Separar por MQTT
 y RF*; con ella apagada, todos los nodos aparecen en una única lista.

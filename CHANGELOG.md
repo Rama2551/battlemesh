@@ -1,5 +1,13 @@
 # Historial de versiones
 
+## 1.4.3
+
+- **Corregida la presencia**: un nodo con el que estabas chateando podía figurar
+  como *nunca escuchado*. La presencia sólo miraba los anuncios de identidad;
+  ahora cuenta **cualquier** paquete recibido, incluidos los mensajes.
+- **Corregida la clasificación RF/MQTT**: los nodos que figuran en la base de
+  datos pero que nunca escuchaste ya no aparecen en *Por radio*.
+
 ## 1.4.2
 
 - **Confirmaciones de entrega más fiables**: un mensaje puede generar varias
