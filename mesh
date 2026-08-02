@@ -115,8 +115,9 @@ def _self_update():
     print(f"BATTLEMESH {VERSION}")
     print(f"Buscando actualizaciones en {UPDATE_URL} …")
     try:
+        url = UPDATE_URL + ("&" if "?" in UPDATE_URL else "?") + f"nocache={int(time.time())}"
         req = urllib.request.Request(
-            UPDATE_URL,
+            url,
             headers={"Cache-Control": "no-cache", "Pragma": "no-cache",
                      "User-Agent": f"battlemesh/{VERSION}"})
         with urllib.request.urlopen(req, timeout=30) as r:
