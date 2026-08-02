@@ -1,0 +1,35 @@
+# Historial de versiones
+
+## 1.3.0
+
+- **Autoactualización**: `battlemesh --update` descarga e instala la última
+  versión, validándola antes y dejando copia de respaldo.
+- `battlemesh --version` y `battlemesh --help`.
+- Estos comandos funcionan aunque la máquina todavía no tenga las dependencias.
+
+## 1.2.0
+
+- **Presencia por nodo**: en línea / visto hace poco / no está en línea.
+- **Calidad de enlace** con marcador de señal, SNR y RSSI en dB, y saltos.
+- Aviso al escribirle a un nodo que no está en línea (el mensaje queda en cola).
+- `F4` alterna nombres largos y cortos; la preferencia se recuerda.
+
+## 1.1.1
+
+- Compatibilidad explícita con Heltec V3/V4 y otros nodos (`ttyACM`).
+- Muestra el modelo de hardware al conectar y lista los puertos si no encuentra
+  la placa.
+
+## 1.1.0
+
+- **Panel de configuración del nodo** (`F9`): todos los parámetros de Meshtastic
+  en pestañas, con modo Básico/Avanzado, carga de la configuración actual del
+  aparato y validación de los límites del firmware.
+
+## 1.0.0
+
+- Chat de canales/grupos y mensajes directos, con lista lateral y mouse.
+- Doble check de entrega y reenvío automático de pendientes.
+- Buscador de nodos, sonido de notificación e historial persistente.
+- Control remoto de la pantalla del nodo.
+- Autodetección de la placa LoRa, paquete `.deb` y script portátil.

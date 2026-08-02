@@ -68,14 +68,39 @@ entorno virtual e instala las dependencias (necesita internet **solo esa vez**).
 
 ### Actualizar
 
-Una vez instalado, se actualiza solo con:
+Desde la versión **1.3.0** se actualiza solo, con un comando:
 
 ```bash
 battlemesh --update            # o: sudo battlemesh --update si está en /usr/bin
 ```
 
-Descarga la última versión publicada, la valida y guarda una copia de la anterior
-por si querés volver atrás. Para ver qué versión tenés: `battlemesh --version`.
+Descarga la última versión publicada, **la valida antes de reemplazar nada** y
+guarda una copia de la anterior (`.backup-<versión>`) por si querés volver atrás.
+Si ya estás al día, no hace nada.
+
+> ⚠️ **Si tenés una versión anterior a la 1.3.0**, ese comando todavía no existe:
+> la primera actualización hay que hacerla a mano, y de ahí en más ya funciona
+> `--update`.
+>
+> ```bash
+> # instalado con install.sh (en ~/.local/bin)
+> curl -fsSL https://raw.githubusercontent.com/Rama2551/battlemesh/main/mesh \
+>   -o ~/.local/bin/mesh && chmod +x ~/.local/bin/mesh
+>
+> # si clonaste el repo
+> git pull
+>
+> # si instalaste el .deb
+> curl -fsSLO https://raw.githubusercontent.com/Rama2551/battlemesh/main/battlemesh_1.3.0_all.deb
+> sudo apt install ./battlemesh_1.3.0_all.deb
+> ```
+
+### Otros comandos
+
+```bash
+battlemesh --version    # qué versión tenés instalada
+battlemesh --help       # ayuda rápida
+```
 
 ### Requisitos
 
@@ -174,7 +199,7 @@ lo retransmitió), no que cada integrante lo haya leído.
 | Archivo | Contenido |
 |---|---|
 | `~/.local/share/mesh-tui/history.json` | Historial de conversaciones |
-| `~/.local/share/mesh-tui/config.json` | Preferencias (sonido) |
+| `~/.local/share/mesh-tui/config.json` | Preferencias (sonido, nombres largos/cortos) |
 | `~/.local/share/mesh-tui/venv/` | Entorno con las dependencias |
 
 Para borrar todo el historial de una: eliminá `history.json`.
@@ -186,6 +211,9 @@ Para borrar todo el historial de una: eliminá `history.json`.
   independiente de la PC requiere un nodo router con ese módulo del firmware.
 - El **control de pantalla remoto** usa el comando `send_input_event` del
   firmware; su efecto depende de la versión y del modelo de nodo.
+- Desarrollado y probado sobre Heltec WiFi LoRa 32 V2 con firmware Meshtastic
+  2.7.x en Linux Mint 22.
+
 ## Compatibilidad de hardware
 
 Funciona con **cualquier nodo Meshtastic conectado por USB** — no está atado a un
@@ -205,11 +233,6 @@ el nodo (por ejemplo `HELTEC_V3`), para que confirmes con cuál estás hablando.
 > Los nodos **nRF52** (RAK4631, T-Echo) no entran en la autodetección de la
 > librería; con esos hay que pasar el puerto manualmente.
 
-## Notas y limitaciones
-
-- Desarrollado y probado sobre Heltec WiFi LoRa 32 V2 con firmware Meshtastic
-  2.7.x en Linux Mint 22.
-
 ## Compilar el `.deb`
 
 ```bash
@@ -217,6 +240,10 @@ el nodo (por ejemplo `HELTEC_V3`), para que confirmes con cuál estás hablando.
 ```
 
 Genera `battlemesh_<version>_all.deb` en el directorio actual.
+
+## Historial de versiones
+
+Ver [CHANGELOG.md](CHANGELOG.md).
 
 ## Licencia
 
