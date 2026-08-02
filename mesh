@@ -10,7 +10,8 @@ Panel izquierdo (clickeable con el mouse): conversaciones
   📢 Broadcast / canales  -> mensajes a todo un grupo
   💬 <nodo>               -> mensaje directo (DM) a un solo nodo
 Escribí abajo y Enter para enviar.
-Teclas:  F2 sonido · F3 borrar historial · F5 refrescar · F6/F7/F8 pantalla del nodo
+Teclas:  F2 sonido · F3 borrar historial · F4 nombres largos/cortos · F5 refrescar
+         F6/F7/F8 pantalla del nodo
          F9 configuración completa del nodo · q/Ctrl+C salir
 El historial se guarda solo en ~/.local/share/mesh-tui/history.json y se recarga al abrir.
 """
@@ -57,7 +58,49 @@ if "--check" in sys.argv:
     sys.exit(0)
 
 ONLINE_SECS = 300      # se considera "online" si se lo escuchó hace < 5 min
+RECENT_SECS = 7200     # "visto hace poco" (2 h) antes de darlo por ausente
 REFRESH_SECS = 10      # refresco de la lista de nodos
+
+
+def signal_level(snr, rssi=None):
+    """Calidad de enlace 0-4 a partir del SNR (y RSSI si lo tenemos)."""
+    if snr is None:
+        return 0
+    if snr >= -7:
+        lvl = 4
+    elif snr >= -12:
+        lvl = 3
+    elif snr >= -17:
+        lvl = 2
+    else:
+        lvl = 1
+    if rssi is not None and rssi < -115 and lvl > 1:
+        lvl -= 1          # señal muy débil aunque el SNR ayude
+    return lvl
+
+
+def signal_bars(level):
+    """Marcador de señal tipo celular: barras llenas + huecas."""
+    full = "▂▄▆█"
+    empty = "▁▁▁▁"
+    level = max(0, min(4, level))
+    return full[:level] + empty[level:]
+
+
+SIGNAL_COLOR = {0: "dim", 1: "red", 2: "yellow", 3: "green", 4: "b green"}
+SIGNAL_WORD = {0: "sin datos", 1: "débil", 2: "regular", 3: "buena", 4: "excelente"}
+
+
+def age_str(secs):
+    """'hace 3 min' / 'hace 2 h' / 'hace 4 d'."""
+    secs = int(secs)
+    if secs < 60:
+        return f"hace {secs}s"
+    if secs < 3600:
+        return f"hace {secs // 60} min"
+    if secs < 86400:
+        return f"hace {secs // 3600} h"
+    return f"hace {secs // 86400} d"
 
 try:
     from meshtastic.serial_interface import SerialInterface
@@ -505,6 +548,7 @@ class MeshApp(App):
         ("ctrl+c", "quit", "Salir"),
         ("f2", "toggle_sound", "Sonido on/off"),
         ("f3", "clear_log", "Borrar historial"),
+        ("f4", "toggle_names", "Nombres largos/cortos"),
         ("f5", "refresh_nodes", "Refrescar nodos"),
         ("f6", "screen_prev", "Heltec ◀"),
         ("f7", "screen_next", "Heltec ▶"),
@@ -528,6 +572,8 @@ class MeshApp(App):
         self.pending = {}           # pid -> rec (esperando ACK)
         self.outbox = {}            # node_num -> [rec,...] no entregados (reenvio al volver online)
         self._online_prev = set()
+        self.rssi_cache = {}        # node_num -> RSSI del último paquete oído
+        self.long_names = True      # F4: nombres largos o cortos
         self.load_config()
         self.load_history()
         self._rebuild_outbox()
@@ -548,13 +594,15 @@ class MeshApp(App):
         try:
             cfg = json.loads(CONFIG_FILE.read_text())
             self.sound_enabled = bool(cfg.get("sound_enabled", True))
+            self.long_names = bool(cfg.get("long_names", True))
         except Exception:
             pass
 
     def save_config(self):
         try:
             DATA_DIR.mkdir(parents=True, exist_ok=True)
-            CONFIG_FILE.write_text(json.dumps({"sound_enabled": self.sound_enabled}))
+            CONFIG_FILE.write_text(json.dumps({"sound_enabled": self.sound_enabled,
+                                               "long_names": self.long_names}))
         except Exception:
             pass
 
@@ -613,17 +661,79 @@ class MeshApp(App):
             pass
 
     # ---------- utilidades ----------
-    def node_name(self, num):
+    def _node_rec(self, num):
         try:
             for n in self.iface.nodes.values():
                 if n.get("num") == num:
-                    u = n.get("user", {})
-                    return u.get("longName") or u.get("shortName") or f"!{num:08x}"
+                    return n
         except Exception:
             pass
+        return None
+
+    def node_name(self, num, force_long=False):
+        n = self._node_rec(num)
+        if n:
+            u = n.get("user", {})
+            if self.long_names or force_long:
+                return u.get("longName") or u.get("shortName") or f"!{num:08x}"
+            return u.get("shortName") or u.get("longName") or f"!{num:08x}"
         if num == self.my_num:
             return self.my_name
         return f"!{num:08x}"
+
+    def node_status(self, num):
+        """Estado de un nodo: presencia, señal y antigüedad."""
+        n = self._node_rec(num) or {}
+        snr = n.get("snr")
+        rssi = self.rssi_cache.get(num, n.get("rssi"))
+        hops = n.get("hopsAway")
+        last = n.get("lastHeard")
+        age = (time.time() - last) if last else None
+        if age is None:
+            state = "unknown"
+        elif age < ONLINE_SECS:
+            state = "online"
+        elif age < RECENT_SECS:
+            state = "recent"
+        else:
+            state = "offline"
+        return {"snr": snr, "rssi": rssi, "hops": hops, "age": age, "state": state,
+                "level": signal_level(snr, rssi)}
+
+    STATE_DOT = {"online": "[b green]●[/]", "recent": "[yellow]●[/]",
+                 "offline": "[dim]○[/]", "unknown": "[dim]○[/]"}
+
+    def node_signal_markup(self, num):
+        """Punto de presencia + barras de señal, para la lista."""
+        st = self.node_status(num)
+        dot = self.STATE_DOT[st["state"]]
+        if st["state"] == "offline" or st["snr"] is None:
+            bars = f"[dim]{signal_bars(0)}[/]"
+        else:
+            bars = f"[{SIGNAL_COLOR[st['level']]}]{signal_bars(st['level'])}[/]"
+        return dot, bars, st
+
+    def node_detail_line(self, num):
+        """Línea descriptiva completa para la cabecera de la conversación."""
+        st = self.node_status(num)
+        parts = []
+        if st["state"] == "online":
+            parts.append("[b green]en línea[/]")
+        elif st["state"] == "recent":
+            parts.append(f"[yellow]visto {age_str(st['age'])}[/]")
+        elif st["state"] == "offline":
+            parts.append(f"[red]no está en línea[/] · visto {age_str(st['age'])}")
+        else:
+            parts.append("[dim]nunca escuchado[/]")
+        if st["snr"] is not None:
+            lvl = st["level"]
+            det = f"{signal_bars(lvl)} {SIGNAL_WORD[lvl]}  SNR {st['snr']:.1f} dB"
+            if st["rssi"] is not None:
+                det += f" · RSSI {int(st['rssi'])} dBm"
+            parts.append(f"[{SIGNAL_COLOR[lvl]}]{det}[/]")
+        if st["hops"] is not None:
+            parts.append("directo" if st["hops"] == 0 else f"{st['hops']} salto(s)")
+        return "   ·   ".join(parts)
 
     def channel_list(self):
         """Devuelve [(index, nombre)] de canales activos."""
@@ -648,7 +758,12 @@ class MeshApp(App):
             name = dict(self.channel_list()).get(idx, f"Canal {idx}")
             base = f"📢 {name}" + ("" if idx == 0 else f" (c{idx})")
         else:
-            base = f"💬 {self.node_name(key[1])}"
+            num = key[1]
+            dot, bars, st = self.node_signal_markup(num)
+            name = self.node_name(num)
+            if st["state"] == "offline":
+                name = f"[dim]{name}[/]"
+            base = f"{dot} {name}  {bars}"
         u = self.unread.get(key, 0)
         if u and key != self.current:
             base += f"  [b yellow]({u})[/]"
@@ -674,6 +789,7 @@ class MeshApp(App):
         self.rebuild_convos()
         pub.subscribe(self._on_text_thread, "meshtastic.receive.text")
         pub.subscribe(self._on_node_thread, "meshtastic.node.updated")
+        pub.subscribe(self._on_packet_thread, "meshtastic.receive")   # para capturar RSSI
         self.set_interval(REFRESH_SECS, self.periodic_refresh)  # actualiza nodos + reenvíos, sin bloquear
         self.query_one("#msg", Input).focus()
         self.select_convo(("ch", 0))
@@ -736,7 +852,9 @@ class MeshApp(App):
             name = dict(self.channel_list()).get(key[1], f"Canal {key[1]}")
             hdr.update(f"📢 Grupo: {name}   —   mensaje a todos en este canal")
         else:
-            hdr.update(f"💬 Directo con: {self.node_name(key[1])}   —   solo lo recibe ese nodo")
+            num = key[1]
+            hdr.update(f"💬 {self.node_name(num, force_long=True)}   ·   "
+                       + self.node_detail_line(num))
         rl = self.query_one("#log", RichLog)
         rl.clear()
         for rec in self.history.get(key, []):
@@ -825,9 +943,15 @@ class MeshApp(App):
                 self.notify(f"No se pudo enviar: {e}", severity="error")
         else:
             num = key[1]
+            st = self.node_status(num)
             rec = self.add_msg(key, "out", "DM", text, touch_unread=False, status="sent")
             self.outbox.setdefault(num, []).append(rec)
             self._transmit_dm(num, rec)
+            if st["state"] in ("offline", "unknown"):
+                visto = f" (visto {age_str(st['age'])})" if st["age"] else ""
+                self.notify(f"⚠ {self.node_name(num, force_long=True)} no está en línea{visto}. "
+                            f"Queda en cola y se reenvía cuando vuelva.", severity="warning",
+                            timeout=7)
         self.save_history()
         self.refresh_current_log()
 
@@ -922,6 +1046,16 @@ class MeshApp(App):
             key = ("ch", packet.get("channel", 0) or 0)
         self.add_msg(key, "in", name, txt)
 
+    def _on_packet_thread(self, packet=None, interface=None):
+        """Cualquier paquete recibido trae el RSSI real de esa transmisión."""
+        try:
+            frm = packet.get("from")
+            rssi = packet.get("rxRssi")
+            if frm is not None and rssi:
+                self.rssi_cache[frm] = rssi
+        except Exception:
+            pass
+
     def _on_node_thread(self, node=None, interface=None):
         try:
             self.call_from_thread(self._handle_node)
@@ -972,6 +1106,14 @@ class MeshApp(App):
 
     def action_screen_select(self):
         self._send_input_event(INPUT_SELECT, "OK / entrar")
+
+    def action_toggle_names(self):
+        """F4: alterna entre nombres largos ('Aliencool') y cortos ('alie')."""
+        self.long_names = not self.long_names
+        self.save_config()
+        self.rebuild_convos(preserve=True)
+        self.select_convo(self.current)
+        self.notify("Nombres largos" if self.long_names else "Nombres cortos")
 
     def action_toggle_sound(self):
         self.sound_enabled = not self.sound_enabled

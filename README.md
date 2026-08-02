@@ -49,7 +49,7 @@ internet para funcionar.
 ### Opción A — paquete `.deb` (Debian / Ubuntu / Linux Mint)
 
 ```bash
-sudo apt install ./battlemesh_1.1.1_all.deb
+sudo apt install ./battlemesh_1.2.0_all.deb
 ```
 
 Deja el comando `battlemesh` en el sistema y una entrada en el menú.
