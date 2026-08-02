@@ -54,7 +54,7 @@ internet para funcionar.
 ### Opción A — paquete `.deb` (Debian / Ubuntu / Linux Mint)
 
 ```bash
-sudo apt install ./battlemesh_1.4.0_all.deb
+sudo apt install ./battlemesh_1.4.1_all.deb
 ```
 
 Deja el comando `battlemesh` en el sistema y una entrada en el menú.
@@ -94,8 +94,8 @@ Si ya estás al día, no hace nada.
 > git pull
 >
 > # si instalaste el .deb
-> curl -fsSLO https://raw.githubusercontent.com/Rama2551/battlemesh/main/battlemesh_1.4.0_all.deb
-> sudo apt install ./battlemesh_1.4.0_all.deb
+> curl -fsSLO https://raw.githubusercontent.com/Rama2551/battlemesh/main/battlemesh_1.4.1_all.deb
+> sudo apt install ./battlemesh_1.4.1_all.deb
 > ```
 
 ### Otros comandos
@@ -213,12 +213,20 @@ avisa y el mensaje **queda en cola** para reenviarse cuando vuelva.
 | Marca | Significado |
 |---|---|
 | ✓ | El mensaje **salió** de tu nodo |
-| ✓✓ | El **nodo destino lo recibió** (ACK de la malla) |
+| ✓✓ | El **nodo destino lo recibió** (confirmación del propio destinatario) |
 | 🕓 | **En cola**: el destino no responde; se reenvía cuando vuelva a estar en línea |
 | ✗ | Error al enviar |
 
 En canales/broadcast, ✓✓ significa que el mensaje entró en la malla (un vecino
 lo retransmitió), no que cada integrante lo haya leído.
+
+> En los mensajes directos, el ✓✓ sólo aparece cuando **el propio destinatario**
+> confirma. Si el mensaje lo retransmite un repetidor pero el destino está
+> apagado o fuera de alcance, queda en ✓ — no se marca como entregado.
+
+**Señal atenuada:** las barras van a color únicamente cuando el nodo está en
+línea. Si hace rato que no se lo escucha, se muestran grises: es el último valor
+conocido, no la señal actual.
 
 ## Dónde guarda los datos
 

@@ -1,5 +1,14 @@
 # Historial de versiones
 
+## 1.4.1
+
+- **Corregido el doble check falso**: sólo se marca ✓✓ cuando confirma el propio
+  destinatario. Antes, el ACK que genera un repetidor al retransmitir se tomaba
+  como entrega, y un nodo apagado aparecía como si hubiera recibido el mensaje.
+- **Corregida la señal desactualizada**: las barras van a color sólo si el nodo
+  está en línea; si hace rato que no se lo escucha se muestran atenuadas y el
+  detalle aclara que es la *última señal* conocida.
+
 ## 1.4.0
 
 - **Lista separada en 📻 RF y 🌐 MQTT**, en secciones plegables que pueden estar

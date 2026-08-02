@@ -59,7 +59,7 @@ if "--check" in sys.argv:
           "| meshtastic importado")
     sys.exit(0)
 
-VERSION = "1.4.0"
+VERSION = "1.4.1"
 UPDATE_URL = "https://raw.githubusercontent.com/Rama2551/battlemesh/main/mesh"
 
 ONLINE_SECS = 300      # se considera "online" si se lo escuchó hace < 5 min
@@ -867,13 +867,19 @@ class MeshApp(App):
                  "offline": "[dim]○[/]", "unknown": "[dim]○[/]"}
 
     def node_signal_markup(self, num):
-        """Punto de presencia + barras de señal, para la lista."""
+        """Punto de presencia + barras de señal, para la lista.
+
+        Las barras van a color SÓLO si el nodo está en línea; si hace rato que no
+        se lo escucha se muestran atenuadas, porque ese dato ya es viejo.
+        """
         st = self.node_status(num)
         dot = self.STATE_DOT[st["state"]]
-        if st["state"] == "offline" or st["snr"] is None:
+        if st["snr"] is None or st["state"] in ("offline", "unknown"):
             bars = f"[dim]{signal_bars(0)}[/]"
-        else:
+        elif st["state"] == "online":
             bars = f"[{SIGNAL_COLOR[st['level']]}]{signal_bars(st['level'])}[/]"
+        else:                       # visto hace poco: última señal conocida, atenuada
+            bars = f"[dim]{signal_bars(st['level'])}[/]"
         return dot, bars, st
 
     def node_detail_line(self, num):
@@ -893,7 +899,10 @@ class MeshApp(App):
             det = f"{signal_bars(lvl)} {SIGNAL_WORD[lvl]}  SNR {st['snr']:.1f} dB"
             if st["rssi"] is not None:
                 det += f" · RSSI {int(st['rssi'])} dBm"
-            parts.append(f"[{SIGNAL_COLOR[lvl]}]{det}[/]")
+            if st["state"] == "online":
+                parts.append(f"[{SIGNAL_COLOR[lvl]}]{det}[/]")
+            else:                   # el dato es del último contacto, no de ahora
+                parts.append(f"[dim]última señal: {det}[/]")
         if st["hops"] is not None:
             parts.append("directo" if st["hops"] == 0 else f"{st['hops']} salto(s)")
         return "   ·   ".join(parts)
@@ -1151,6 +1160,7 @@ class MeshApp(App):
             num = key[1]
             st = self.node_status(num)
             rec = self.add_msg(key, "out", "DM", text, touch_unread=False, status="sent")
+            rec["dest"] = num          # para distinguir el ACK real del implícito
             self.outbox.setdefault(num, []).append(rec)
             self._transmit_dm(num, rec)
             if st["state"] in ("offline", "unknown"):
@@ -1173,16 +1183,29 @@ class MeshApp(App):
         return onAckNak
 
     def _handle_ack(self, packet, rec):
+        """Procesa una confirmación.
+
+        OJO: la malla genera dos tipos de ACK. El *implícito* lo produce un vecino
+        al retransmitir el mensaje, y sólo prueba que salió al aire. El real lo
+        manda el nodo destino. Sólo ese último cuenta como entregado (✓✓).
+        """
         try:
             routing = (packet.get("decoded") or {}).get("routing") or {}
             err = routing.get("errorReason", "NONE")
         except Exception:
             err = "NONE"
+        frm = packet.get("from")
+        dest = rec.get("dest")
         if err in ("NONE", None):
-            rec["status"] = "delivered"      # ✓✓ el otro nodo lo recibió
-            self._outbox_remove(rec)
+            if dest is not None and frm is not None and frm != dest:
+                # confirmó un repetidor, no el destinatario: sólo salió al aire
+                if rec.get("status") != "delivered":
+                    rec["status"] = "sent"
+            else:
+                rec["status"] = "delivered"      # ✓✓ lo confirmó el propio destino
+                self._outbox_remove(rec)
         elif rec.get("status") != "delivered":
-            rec["status"] = "pending"        # 🕓 reintento cuando el nodo vuelva
+            rec["status"] = "pending"            # 🕓 reintento cuando el nodo vuelva
         self.save_history()
         self.refresh_current_log()
 
