@@ -27,6 +27,8 @@ from datetime import datetime
 # ---------- auto-instalador de dependencias (portable, corre en cualquier PC) ----------
 def _ensure_deps():
     """Si faltan meshtastic/textual, crea un venv propio, las instala y re-lanza."""
+    if any(a in sys.argv for a in ("--update", "--version", "-V", "--help", "-h")):
+        return                      # estos comandos no necesitan dependencias
     try:
         import meshtastic, textual, pubsub  # noqa
         return
@@ -56,6 +58,9 @@ if "--check" in sys.argv:
     print("deps OK  ->  textual", getattr(textual, "__version__", "?"),
           "| meshtastic importado")
     sys.exit(0)
+
+VERSION = "1.3.0"
+UPDATE_URL = "https://raw.githubusercontent.com/Rama2551/battlemesh/main/mesh"
 
 ONLINE_SECS = 300      # se considera "online" si se lo escuchó hace < 5 min
 RECENT_SECS = 7200     # "visto hace poco" (2 h) antes de darlo por ausente
@@ -1145,6 +1150,56 @@ class MeshApp(App):
             pass
 
 
+def self_update():
+    """Descarga la última versión desde GitHub y se reemplaza a sí mismo."""
+    import urllib.request
+    import re as _re
+    dest = os.path.realpath(__file__)
+    print(f"BATTLEMESH {VERSION}")
+    print(f"Buscando actualizaciones en {UPDATE_URL} …")
+    try:
+        with urllib.request.urlopen(UPDATE_URL, timeout=30) as r:
+            nuevo = r.read().decode("utf-8")
+    except Exception as e:
+        print(f"✗ No pude descargar la actualización: {e}")
+        return 1
+    # validaciones antes de pisar nada
+    if not nuevo.lstrip().startswith("#!") or "class MeshApp" not in nuevo:
+        print("✗ Lo descargado no parece BATTLEMESH. No toco nada.")
+        return 1
+    mm = _re.search(r'^VERSION\s*=\s*"([^"]+)"', nuevo, _re.M)
+    remota = mm.group(1) if mm else "?"
+    if remota == VERSION:
+        print(f"✓ Ya tenés la última versión ({VERSION}).")
+        return 0
+    if remota == "?":
+        print("⚠ No pude leer la versión de la copia remota; la instalo igual.")
+    else:
+        print(f"Nueva versión disponible: {remota}  (tenés {VERSION})")
+    try:
+        compile(nuevo, dest, "exec")          # que al menos sea Python válido
+    except SyntaxError as e:
+        print(f"✗ La descarga está corrupta: {e}. No toco nada.")
+        return 1
+    respaldo = dest + f".backup-{VERSION}"
+    try:
+        shutil.copy2(dest, respaldo)
+        tmp = dest + ".new"
+        with open(tmp, "w", encoding="utf-8") as f:
+            f.write(nuevo)
+        os.chmod(tmp, os.stat(dest).st_mode)
+        os.replace(tmp, dest)
+    except PermissionError:
+        print(f"✗ Sin permisos para escribir en {dest}")
+        print(f"  Probá:  sudo {dest} --update")
+        return 1
+    except Exception as e:
+        print(f"✗ Error al actualizar: {e}")
+        return 1
+    print(f"✅ Actualizado a {remota}.  (copia previa en {respaldo})")
+    return 0
+
+
 def find_lora_ports():
     """Autodetecta puertos USB con una placa LoRa/Meshtastic (cualquiera, no una en particular)."""
     try:
@@ -1155,7 +1210,21 @@ def find_lora_ports():
 
 
 def main():
-    port = sys.argv[1] if len(sys.argv) > 1 else None
+    args = [a for a in sys.argv[1:]]
+    if "--update" in args:
+        sys.exit(self_update())
+    if "--version" in args or "-V" in args:
+        print(f"BATTLEMESH {VERSION}")
+        sys.exit(0)
+    if "--help" in args or "-h" in args:
+        print(f"BATTLEMESH {VERSION} — cliente Meshtastic por USB\n"
+              "\nUso:\n"
+              "  battlemesh                 conecta autodetectando la placa\n"
+              "  battlemesh /dev/ttyACM0    fuerza un puerto\n"
+              "  battlemesh --update        actualiza a la última versión\n"
+              "  battlemesh --version       muestra la versión\n")
+        sys.exit(0)
+    port = args[0] if args and not args[0].startswith("-") else None
     if not port:                          # sin argumento -> autodetectar
         found = find_lora_ports()
         if not found:

@@ -51,7 +51,7 @@ internet para funcionar.
 ### Opción A — paquete `.deb` (Debian / Ubuntu / Linux Mint)
 
 ```bash
-sudo apt install ./battlemesh_1.2.0_all.deb
+sudo apt install ./battlemesh_1.3.0_all.deb
 ```
 
 Deja el comando `battlemesh` en el sistema y una entrada en el menú.
@@ -65,6 +65,17 @@ chmod +x mesh
 
 Es **un solo archivo autosuficiente**: en la primera ejecución crea su propio
 entorno virtual e instala las dependencias (necesita internet **solo esa vez**).
+
+### Actualizar
+
+Una vez instalado, se actualiza solo con:
+
+```bash
+battlemesh --update            # o: sudo battlemesh --update si está en /usr/bin
+```
+
+Descarga la última versión publicada, la valida y guarda una copia de la anterior
+por si querés volver atrás. Para ver qué versión tenés: `battlemesh --version`.
 
 ### Requisitos
 
