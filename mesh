@@ -1,0 +1,711 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+BATTLEMESH - TUI visual (con mouse) para tu nodo Meshtastic por USB. 100% local, sin internet.
+
+Uso:  battlemesh              (autodetecta la placa LoRa conectada por USB)
+      battlemesh /dev/ttyUSB1 (forzar un puerto)
+
+Panel izquierdo (clickeable con el mouse): conversaciones
+  📢 Broadcast / canales  -> mensajes a todo un grupo
+  💬 <nodo>               -> mensaje directo (DM) a un solo nodo
+Escribí abajo y Enter para enviar.
+Teclas:  F2 sonido on/off · F3 borrar historial de la conversación · F5 refrescar · q/Ctrl+C salir
+El historial se guarda solo en ~/.local/share/mesh-tui/history.json y se recarga al abrir.
+"""
+import sys
+import os
+import json
+import time
+import shutil
+import subprocess
+from pathlib import Path
+from datetime import datetime
+
+# ---------- auto-instalador de dependencias (portable, corre en cualquier PC) ----------
+def _ensure_deps():
+    """Si faltan meshtastic/textual, crea un venv propio, las instala y re-lanza."""
+    try:
+        import meshtastic, textual, pubsub  # noqa
+        return
+    except ImportError:
+        pass
+    import os, subprocess, venv, pathlib
+    venv_dir = pathlib.Path(os.environ.get("MESH_VENV",
+                            pathlib.Path.home() / ".local/share/mesh-tui/venv"))
+    py = venv_dir / "bin" / "python"
+    if not py.exists():
+        print("Primera vez en esta máquina: preparando el entorno (1-2 min, necesita internet)…")
+        try:
+            venv.create(venv_dir, with_pip=True)
+        except Exception as e:
+            sys.exit("No pude crear el entorno virtual.\n"
+                     "En Debian/Mint/Ubuntu instalá primero:  sudo apt install python3-venv\n"
+                     f"Detalle: {e}")
+        subprocess.check_call([str(py), "-m", "pip", "install", "-q", "--upgrade", "pip"])
+        subprocess.check_call([str(py), "-m", "pip", "install", "-q", "meshtastic", "textual"])
+        print("Entorno listo ✅")
+    os.execv(str(py), [str(py), os.path.abspath(__file__)] + sys.argv[1:])
+
+_ensure_deps()
+
+if "--check" in sys.argv:
+    import meshtastic, textual
+    print("deps OK  ->  textual", getattr(textual, "__version__", "?"),
+          "| meshtastic importado")
+    sys.exit(0)
+
+ONLINE_SECS = 300      # se considera "online" si se lo escuchó hace < 5 min
+REFRESH_SECS = 10      # refresco de la lista de nodos
+
+try:
+    from meshtastic.serial_interface import SerialInterface
+    from pubsub import pub
+except Exception as e:
+    print("No pude importar meshtastic:", e)
+    sys.exit(1)
+
+try:
+    from meshtastic.protobuf import admin_pb2
+except Exception:
+    try:
+        import meshtastic.admin_pb2 as admin_pb2
+    except Exception:
+        admin_pb2 = None
+
+from textual.app import App, ComposeResult
+from textual.containers import Horizontal, Vertical
+from textual.widgets import Header, Footer, Input, RichLog, ListView, ListItem, Label, Static
+
+# Códigos de evento de entrada del firmware (para controlar la pantalla del Heltec remotamente)
+INPUT_UP, INPUT_DOWN, INPUT_LEFT, INPUT_RIGHT, INPUT_SELECT = 17, 18, 19, 20, 10
+
+BROADCAST_NUM = 0xFFFFFFFF
+
+DATA_DIR = Path(os.environ.get("MESH_DATA", Path.home() / ".local/share/mesh-tui"))
+HISTORY_FILE = DATA_DIR / "history.json"
+CONFIG_FILE = DATA_DIR / "config.json"
+MAX_PER_CONVO = 800   # tope de mensajes guardados por conversacion
+
+
+def ts():
+    return datetime.now().strftime("%H:%M:%S")
+
+
+def key_to_str(key):
+    return f"{key[0]}:{key[1]}"
+
+
+def str_to_key(s):
+    kind, val = s.split(":", 1)
+    return (kind, int(val))
+
+
+RIFLE_ART = "                                             ##\n                                          ###########\n                                          ###########\n                                #################################################\n     #############################################################################\n     #####################################################################################################\n     ###################      ########################  ##########################\n     ###      #####               #######  # #########\n     #########                   ##### #     #########\n      #####                     #####         ########\n                              ######          ########\n                                ####          ######"
+
+BANNER_ART = " ____    _  _____ _____ _     _____ __  __ _____ ____  _   _ \n| __ )  / \\|_   _|_   _| |   | ____|  \\/  | ____/ ___|| | | |\n|  _ \\ / _ \\ | |   | | | |   |  _| | |\\/| |  _| \\___ \\| |_| |\n| |_) / ___ \\| |   | | | |___| |___| |  | | |___ ___) |  _  |\n|____/_/   \\_\\_|   |_| |_____|_____|_|  |_|_____|____/|_| |_|\n                                                             "
+
+
+def splash(port):
+    """Pantalla de carga mostrada mientras conecta el ESP."""
+    GRAY = "\033[38;5;250m"; GREEN = "\033[1;32m"; DIM = "\033[2m"
+    YEL = "\033[1;33m"; OFF = "\033[0m"
+    try:
+        sys.stdout.write("\033[2J\033[H")   # limpiar pantalla
+        print(GRAY + RIFLE_ART + OFF)
+        print(GREEN + BANNER_ART + OFF)
+        print("                    " + DIM + "dev: Ramiro Spinolo" + OFF)
+        print()
+        print(YEL + f"   ▶ Conectando al nodo en {port} …" + OFF)
+        sys.stdout.flush()
+    except Exception:
+        print(f"BATTLEMESH - conectando en {port} ...")
+
+
+class ConvoItem(ListItem):
+    """Un item de la lista de conversaciones, guarda su clave."""
+    def __init__(self, key, label_text):
+        self._label = Label(label_text)
+        super().__init__(self._label)
+        self.key = key
+        self.label_text = label_text
+
+    def set_text(self, text):
+        self.label_text = text
+        self._label.update(text)
+
+
+class MeshApp(App):
+    CSS = """
+    Screen { layout: vertical; }
+    #body { height: 1fr; }
+    #sidebar {
+        width: 34;
+        border: round $accent;
+        background: $panel;
+    }
+    #sidebar-title {
+        padding: 0 1;
+        background: $accent;
+        color: $text;
+        text-style: bold;
+    }
+    #search { border: round $primary; height: 3; }
+    #convos { height: 1fr; }
+    ConvoItem { padding: 0 1; }
+    #main { width: 1fr; border: round $primary; }
+    #convo-header {
+        padding: 0 1;
+        background: $primary;
+        color: $text;
+        text-style: bold;
+    }
+    #log { height: 1fr; padding: 0 1; background: $surface; }
+    #msg { dock: bottom; border: tall $accent; }
+    """
+
+    BINDINGS = [
+        ("ctrl+c", "quit", "Salir"),
+        ("f2", "toggle_sound", "Sonido on/off"),
+        ("f3", "clear_log", "Borrar historial"),
+        ("f5", "refresh_nodes", "Refrescar nodos"),
+        ("f6", "screen_prev", "Heltec ◀"),
+        ("f7", "screen_next", "Heltec ▶"),
+        ("f8", "screen_select", "Heltec OK"),
+        ("q", "quit", "Salir"),
+    ]
+
+    def __init__(self, iface, my_num, my_name):
+        super().__init__()
+        self.iface = iface
+        self.my_num = my_num
+        self.my_name = my_name
+        self.history = {}         # key(tuple) -> list[dict]  (registro persistente)
+        self.unread = {}          # key -> int
+        self.order = []           # orden de las claves en la lista
+        self.current = ("ch", 0)  # conversacion seleccionada
+        self._pending_clear = None
+        self.sound_enabled = True
+        self.filter_text = ""       # buscador de nodos
+        self.pending = {}           # pid -> rec (esperando ACK)
+        self.outbox = {}            # node_num -> [rec,...] no entregados (reenvio al volver online)
+        self._online_prev = set()
+        self.load_config()
+        self.load_history()
+        self._rebuild_outbox()
+        self._sound_cmd = self._detect_sound_cmd()
+
+    def _rebuild_outbox(self):
+        """Al iniciar, los DM no entregados quedan pendientes para reenviar cuando el nodo vuelva."""
+        for key, recs in self.history.items():
+            if key[0] != "dm":
+                continue
+            for rec in recs:
+                if rec.get("kind") == "out" and rec.get("status") in ("sent", "pending"):
+                    rec["status"] = "pending"
+                    self.outbox.setdefault(key[1], []).append(rec)
+
+    # ---------- persistencia ----------
+    def load_config(self):
+        try:
+            cfg = json.loads(CONFIG_FILE.read_text())
+            self.sound_enabled = bool(cfg.get("sound_enabled", True))
+        except Exception:
+            pass
+
+    def save_config(self):
+        try:
+            DATA_DIR.mkdir(parents=True, exist_ok=True)
+            CONFIG_FILE.write_text(json.dumps({"sound_enabled": self.sound_enabled}))
+        except Exception:
+            pass
+
+    def load_history(self):
+        try:
+            raw = json.loads(HISTORY_FILE.read_text())
+            for ks, recs in raw.items():
+                try:
+                    self.history[str_to_key(ks)] = recs
+                except Exception:
+                    continue
+        except Exception:
+            pass
+
+    def save_history(self):
+        try:
+            DATA_DIR.mkdir(parents=True, exist_ok=True)
+            data = {key_to_str(k): v for k, v in self.history.items() if v}
+            tmp = HISTORY_FILE.with_suffix(".tmp")
+            tmp.write_text(json.dumps(data, ensure_ascii=False))
+            tmp.replace(HISTORY_FILE)
+        except Exception:
+            pass
+
+    # ---------- sonido ----------
+    def _detect_sound_cmd(self):
+        """Elige un reproductor + sonido disponible (o None -> usa el bell)."""
+        files = [
+            "/usr/share/sounds/freedesktop/stereo/message-new-instant.oga",
+            "/usr/share/sounds/freedesktop/stereo/message.oga",
+            "/usr/share/sounds/freedesktop/stereo/bell.oga",
+            "/usr/share/sounds/freedesktop/stereo/complete.oga",
+        ]
+        snd = next((f for f in files if os.path.exists(f)), None)
+        for player in ("paplay", "pw-play"):
+            if shutil.which(player) and snd:
+                return [player, snd]
+        if shutil.which("canberra-gtk-play"):
+            return ["canberra-gtk-play", "-i", "message-new-instant"]
+        if snd and shutil.which("ffplay"):
+            return ["ffplay", "-nodisp", "-autoexit", "-loglevel", "quiet", snd]
+        return None
+
+    def _play_sound(self):
+        cmd = self._sound_cmd
+        if cmd:
+            try:
+                subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                 stdin=subprocess.DEVNULL, start_new_session=True)
+                return
+            except Exception:
+                pass
+        try:
+            self.bell()   # respaldo: timbre del terminal
+        except Exception:
+            pass
+
+    # ---------- utilidades ----------
+    def node_name(self, num):
+        try:
+            for n in self.iface.nodes.values():
+                if n.get("num") == num:
+                    u = n.get("user", {})
+                    return u.get("longName") or u.get("shortName") or f"!{num:08x}"
+        except Exception:
+            pass
+        if num == self.my_num:
+            return self.my_name
+        return f"!{num:08x}"
+
+    def channel_list(self):
+        """Devuelve [(index, nombre)] de canales activos."""
+        out = []
+        try:
+            chans = self.iface.localNode.channels
+            for i, ch in enumerate(chans):
+                role = getattr(ch, "role", 0)
+                if role == 0 and i != 0:
+                    continue  # deshabilitado
+                name = getattr(ch.settings, "name", "") or ("Broadcast" if i == 0 else f"Canal {i}")
+                out.append((i, name))
+        except Exception:
+            out = [(0, "Broadcast")]
+        if not out:
+            out = [(0, "Broadcast")]
+        return out
+
+    def convo_label(self, key):
+        if key[0] == "ch":
+            idx = key[1]
+            name = dict(self.channel_list()).get(idx, f"Canal {idx}")
+            base = f"📢 {name}" + ("" if idx == 0 else f" (c{idx})")
+        else:
+            base = f"💬 {self.node_name(key[1])}"
+        u = self.unread.get(key, 0)
+        if u and key != self.current:
+            base += f"  [b yellow]({u})[/]"
+        return base
+
+    # ---------- construccion UI ----------
+    def compose(self) -> ComposeResult:
+        yield Header(show_clock=True)
+        with Horizontal(id="body"):
+            with Vertical(id="sidebar"):
+                yield Static("Conversaciones", id="sidebar-title")
+                yield Input(placeholder="🔎 Buscar nodo…", id="search")
+                yield ListView(id="convos")
+            with Vertical(id="main"):
+                yield Static("", id="convo-header")
+                yield RichLog(id="log", markup=True, wrap=True, highlight=False)
+                yield Input(placeholder="Escribí un mensaje y Enter…  (q para salir)", id="msg")
+        yield Footer()
+
+    def on_mount(self):
+        self.title = "BATTLEMESH"
+        self.update_subtitle()
+        self.rebuild_convos()
+        pub.subscribe(self._on_text_thread, "meshtastic.receive.text")
+        pub.subscribe(self._on_node_thread, "meshtastic.node.updated")
+        self.set_interval(REFRESH_SECS, self.periodic_refresh)  # actualiza nodos + reenvíos, sin bloquear
+        self.query_one("#msg", Input).focus()
+        self.select_convo(("ch", 0))
+        self.query_one("#log", RichLog).write(
+            "[dim]Conectado. Elegí una conversación a la izquierda (📢 grupo, 💬 DM). "
+            "F2 sonido · F3 borrar historial.[/dim]")
+
+    def update_subtitle(self):
+        snd = "🔔" if self.sound_enabled else "🔕"
+        self.sub_title = f"{self.my_name}   {snd}"
+
+    def _compute_order(self):
+        """Lista de conversaciones (canales + nodos), aplicando el filtro de búsqueda."""
+        ft = self.filter_text
+        order = []
+        for idx, name in self.channel_list():
+            if not ft or ft in name.lower():
+                order.append(("ch", idx))
+        try:
+            for n in list(self.iface.nodes.values()):
+                num = n.get("num")
+                if num is None or num == self.my_num:
+                    continue
+                if not ft or ft in self.node_name(num).lower():
+                    order.append(("dm", num))
+        except Exception:
+            pass
+        if self.current not in order:   # no perder la conversación abierta
+            order.append(self.current)
+        return order
+
+    def rebuild_convos(self, preserve=False):
+        lv = self.query_one("#convos", ListView)
+        lv.clear()
+        self.order = self._compute_order()
+        for key in self.order:
+            lv.append(ConvoItem(key, self.convo_label(key)))
+        if self.current in self.order:   # restaurar el resaltado sin tocar el chat
+            try:
+                lv.index = self.order.index(self.current)
+            except Exception:
+                pass
+
+    def refresh_labels(self):
+        lv = self.query_one("#convos", ListView)
+        for item in lv.query(ConvoItem):
+            item.set_text(self.convo_label(item.key))
+
+    # ---------- seleccion ----------
+    def on_list_view_selected(self, event: ListView.Selected):
+        item = event.item
+        if isinstance(item, ConvoItem):
+            self.select_convo(item.key)
+
+    def select_convo(self, key):
+        self.current = key
+        self.unread[key] = 0
+        hdr = self.query_one("#convo-header", Static)
+        if key[0] == "ch":
+            name = dict(self.channel_list()).get(key[1], f"Canal {key[1]}")
+            hdr.update(f"📢 Grupo: {name}   —   mensaje a todos en este canal")
+        else:
+            hdr.update(f"💬 Directo con: {self.node_name(key[1])}   —   solo lo recibe ese nodo")
+        rl = self.query_one("#log", RichLog)
+        rl.clear()
+        for rec in self.history.get(key, []):
+            rl.write(self.render_record(rec))
+        self._pending_clear = None
+        self.refresh_labels()
+        self.query_one("#msg", Input).focus()
+
+    # ---------- log de mensajes ----------
+    STATUS_MARK = {
+        "sent":      "[dim]✓[/]",        # salió del nodo
+        "delivered": "[b green]✓✓[/]",   # el otro nodo lo recibió
+        "pending":   "[yellow]🕓[/]",     # en cola: se reenvía al volver online
+        "failed":    "[red]✗[/]",
+    }
+
+    def render_record(self, rec):
+        kind = rec.get("kind")
+        t = rec.get("ts", "")
+        who = rec.get("who", "")
+        text = rec.get("text", "")
+        if kind == "in":
+            return f"[green][{t}] {who}:[/] {text}"
+        if kind == "out":
+            mark = self.STATUS_MARK.get(rec.get("status", "sent"), "")
+            return f"[cyan][{t}] vos → {who}:[/] {text}  {mark}"
+        if kind == "err":
+            return f"[red]{text}[/]"
+        return f"[dim]{text}[/dim]"
+
+    def add_msg(self, key, kind, who, text, touch_unread=True, status=None):
+        rec = {"ts": ts(), "kind": kind, "who": who, "text": text}
+        if status:
+            rec["status"] = status
+        if kind in ("in", "out"):   # solo se guardan mensajes reales
+            lst = self.history.setdefault(key, [])
+            lst.append(rec)
+            if len(lst) > MAX_PER_CONVO:
+                del lst[:-MAX_PER_CONVO]
+            self.save_history()
+        line = self.render_record(rec)
+        if key == self.current:
+            self.query_one("#log", RichLog).write(line)
+        elif touch_unread and kind in ("in", "out"):
+            self.unread[key] = self.unread.get(key, 0) + 1
+            self.refresh_labels()
+        if kind == "in" and self.sound_enabled:
+            self._play_sound()
+        return rec
+
+    def refresh_current_log(self):
+        """Redibuja el log de la conversación actual (para reflejar cambios de estado ✓/✓✓)."""
+        try:
+            rl = self.query_one("#log", RichLog)
+        except Exception:
+            return
+        rl.clear()
+        for rec in self.history.get(self.current, []):
+            rl.write(self.render_record(rec))
+
+    # ---------- enviar ----------
+    def on_input_changed(self, event: Input.Changed):
+        if event.input.id == "search":
+            self.filter_text = event.value.strip().lower()
+            self.rebuild_convos(preserve=True)
+
+    def on_input_submitted(self, event: Input.Submitted):
+        if event.input.id == "search":
+            return
+        text = event.value.strip()
+        event.input.value = ""
+        if not text:
+            return
+        if text.lower() in ("/salir", "/quit", "q"):
+            self.exit()
+            return
+        key = self.current
+        if key[0] == "ch":
+            rec = self.add_msg(key, "out", "grupo", text, touch_unread=False, status="sent")
+            try:
+                mp = self.iface.sendText(text, channelIndex=key[1], wantAck=True,
+                                         onResponse=self._make_ack_cb(rec))
+                rec["pid"] = getattr(mp, "id", None)
+            except Exception as e:
+                rec["status"] = "failed"
+                self.notify(f"No se pudo enviar: {e}", severity="error")
+        else:
+            num = key[1]
+            rec = self.add_msg(key, "out", "DM", text, touch_unread=False, status="sent")
+            self.outbox.setdefault(num, []).append(rec)
+            self._transmit_dm(num, rec)
+        self.save_history()
+        self.refresh_current_log()
+
+    # ---------- envio con confirmacion (doble check) y reenvio ----------
+    def _make_ack_cb(self, rec):
+        # IMPORTANTE: meshtastic IGNORA los ACK exitosos salvo que el callback
+        # se llame exactamente "onAckNak". Por eso el nombre no es casual.
+        def onAckNak(packet, *a, **k):
+            try:
+                self.call_from_thread(self._handle_ack, packet, rec)
+            except Exception:
+                pass
+        return onAckNak
+
+    def _handle_ack(self, packet, rec):
+        try:
+            routing = (packet.get("decoded") or {}).get("routing") or {}
+            err = routing.get("errorReason", "NONE")
+        except Exception:
+            err = "NONE"
+        if err in ("NONE", None):
+            rec["status"] = "delivered"      # ✓✓ el otro nodo lo recibió
+            self._outbox_remove(rec)
+        elif rec.get("status") != "delivered":
+            rec["status"] = "pending"        # 🕓 reintento cuando el nodo vuelva
+        self.save_history()
+        self.refresh_current_log()
+
+    def _outbox_remove(self, rec):
+        for lst in self.outbox.values():
+            if rec in lst:
+                lst.remove(rec)
+                break
+
+    def _transmit_dm(self, num, rec):
+        try:
+            mp = self.iface.sendText(rec["text"], destinationId=num, wantAck=True,
+                                     onResponse=self._make_ack_cb(rec))
+            rec["pid"] = getattr(mp, "id", None)
+            rec["status"] = "sent"
+        except Exception:
+            rec["status"] = "pending"
+
+    def _flush_outbox(self, num):
+        for rec in list(self.outbox.get(num, [])):
+            if rec.get("status") == "delivered":
+                continue
+            self._transmit_dm(num, rec)
+        self.save_history()
+        self.refresh_current_log()
+
+    def periodic_refresh(self):
+        """Cada 10s: detecta nodos online (reenvía DMs en cola) y actualiza la lista. No bloquea."""
+        now = time.time()
+        online = set()
+        try:
+            for n in list(self.iface.nodes.values()):
+                num = n.get("num")
+                lh = n.get("lastHeard")
+                if num is None or num == self.my_num:
+                    continue
+                if lh and (now - lh) < ONLINE_SECS:
+                    online.add(num)
+        except Exception:
+            pass
+        for num in (online - self._online_prev):     # nodos que volvieron a estar online
+            if self.outbox.get(num):
+                self._flush_outbox(num)
+        self._online_prev = online
+        if self._compute_order() != self.order:
+            self.rebuild_convos(preserve=True)
+        else:
+            self.refresh_labels()
+
+    # ---------- recepcion (desde el thread de meshtastic) ----------
+    def _on_text_thread(self, packet, interface):
+        try:
+            self.call_from_thread(self._handle_text, packet)
+        except Exception:
+            pass
+
+    def _handle_text(self, packet):
+        frm = packet.get("from")
+        to = packet.get("to")
+        txt = packet.get("decoded", {}).get("text", "")
+        name = self.node_name(frm)
+        if to is not None and to == self.my_num:
+            key = ("dm", frm)
+            if key not in self.order:
+                self.rebuild_convos()
+        else:
+            key = ("ch", packet.get("channel", 0) or 0)
+        self.add_msg(key, "in", name, txt)
+
+    def _on_node_thread(self, node=None, interface=None):
+        try:
+            self.call_from_thread(self._handle_node)
+        except Exception:
+            pass
+
+    def _handle_node(self):
+        self.rebuild_convos()
+
+    def action_refresh_nodes(self):
+        self.rebuild_convos()
+        self.notify("Lista de nodos refrescada")
+
+    # ---------- control remoto de la pantalla del Heltec ----------
+    def _send_input_event(self, code, label=""):
+        """Manda un evento de botón/tecla al nodo local (cambia la pantalla del OLED sin el botón físico)."""
+        if admin_pb2 is None:
+            self.notify("Esta versión de meshtastic no soporta send_input_event", severity="error")
+            return
+        try:
+            p = admin_pb2.AdminMessage()
+            p.send_input_event.event_code = code
+            node = self.iface.localNode
+            try:
+                node.ensureSessionKey()
+            except Exception:
+                pass
+            node._sendAdmin(p, wantResponse=False)
+            self.notify(f"↪ Heltec: {label}")
+        except Exception as e:
+            self.notify(f"No pude enviar el evento: {e}", severity="error")
+
+    def action_screen_next(self):
+        self._send_input_event(INPUT_RIGHT, "siguiente pantalla ▶")
+
+    def action_screen_prev(self):
+        self._send_input_event(INPUT_LEFT, "pantalla anterior ◀")
+
+    def action_screen_select(self):
+        self._send_input_event(INPUT_SELECT, "OK / entrar")
+
+    def action_toggle_sound(self):
+        self.sound_enabled = not self.sound_enabled
+        self.save_config()
+        self.update_subtitle()
+        self.notify("🔔 Sonido de notificaciones ACTIVADO" if self.sound_enabled
+                    else "🔕 Sonido de notificaciones desactivado")
+
+    def action_clear_log(self):
+        key = self.current
+        name = (dict(self.channel_list()).get(key[1]) if key[0] == "ch"
+                else self.node_name(key[1]))
+        if self._pending_clear == key:
+            self.history[key] = []
+            self.save_history()
+            self.query_one("#log", RichLog).clear()
+            self._pending_clear = None
+            self.notify(f"🗑  Historial de «{name}» borrado")
+        else:
+            self._pending_clear = key
+            self.notify(f"¿Borrar el historial de «{name}»? Apretá F3 otra vez para confirmar.",
+                        severity="warning")
+
+    def on_unmount(self):
+        try:
+            pub.unsubscribe(self._on_text_thread, "meshtastic.receive.text")
+            pub.unsubscribe(self._on_node_thread, "meshtastic.node.updated")
+        except Exception:
+            pass
+
+
+def find_lora_ports():
+    """Autodetecta puertos USB con una placa LoRa/Meshtastic (cualquiera, no una en particular)."""
+    try:
+        from meshtastic.util import findPorts
+        return findPorts(True) or []
+    except Exception:
+        return []
+
+
+def main():
+    port = sys.argv[1] if len(sys.argv) > 1 else None
+    if not port:                          # sin argumento -> autodetectar
+        found = find_lora_ports()
+        if not found:
+            splash("(buscando…)")
+            print("\n   ✗ No encontré ninguna placa LoRa conectada por USB.")
+            print("     Conectala y volvé a abrir, o indicá el puerto:  battlemesh /dev/ttyUSB0")
+            sys.exit(1)
+        port = found[0]
+        if len(found) > 1:
+            print(f"   (encontré {len(found)} placas: {', '.join(found)} — uso {port})")
+    splash(port)
+    try:
+        iface = SerialInterface(port)
+    except Exception as e:
+        msg = str(e).lower()
+        print(f"\n✗ No pude abrir el puerto {port}.")
+        if any(w in msg for w in ("resource", "busy", "access", "denied", "could not open")):
+            print("  El puerto está ocupado por otro programa (¿el web client de Chrome? "
+                  "¿otra ventana de BATTLEMESH?). Cerrá esa conexión y volvé a intentar.")
+        else:
+            print(f"  Detalle: {e}")
+        sys.exit(1)
+
+    try:
+        mi = iface.getMyNodeInfo()
+        my_num = mi.get("num")
+        my_name = mi.get("user", {}).get("longName", "tu nodo")
+    except Exception:
+        my_num, my_name = None, "tu nodo"
+
+    app = MeshApp(iface, my_num, my_name)
+    try:
+        app.run()
+    finally:
+        try:
+            iface.close()
+        except Exception:
+            pass
+        print("Chau 👋")
+
+
+if __name__ == "__main__":
+    main()

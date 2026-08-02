@@ -1,0 +1,13 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# artefactos de build del .deb
+build/
+*_all/
+
+# datos locales del usuario (nunca subir conversaciones)
+history.json
+config.json
