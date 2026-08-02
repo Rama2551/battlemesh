@@ -59,7 +59,7 @@ if "--check" in sys.argv:
           "| meshtastic importado")
     sys.exit(0)
 
-VERSION = "1.4.1"
+VERSION = "1.4.2"
 UPDATE_URL = "https://raw.githubusercontent.com/Rama2551/battlemesh/main/mesh"
 
 ONLINE_SECS = 300      # se considera "online" si se lo escuchó hace < 5 min
@@ -1220,7 +1220,10 @@ class MeshApp(App):
             mp = self.iface.sendText(rec["text"], destinationId=num, wantAck=True,
                                      onResponse=self._make_ack_cb(rec))
             rec["pid"] = getattr(mp, "id", None)
+            rec["dest"] = num
             rec["status"] = "sent"
+            if rec["pid"] is not None:
+                self.pending[rec["pid"]] = rec     # para seguir todas sus confirmaciones
         except Exception:
             rec["status"] = "pending"
 
@@ -1276,14 +1279,46 @@ class MeshApp(App):
         self.add_msg(key, "in", name, txt)
 
     def _on_packet_thread(self, packet=None, interface=None):
-        """Cualquier paquete recibido trae el RSSI real de esa transmisión."""
+        """Cada paquete trae el RSSI de esa transmisión, y puede ser una confirmación.
+
+        Miramos acá TODAS las confirmaciones porque la librería descarta su propio
+        handler apenas llega la primera; si esa primera vino del broker MQTT, la
+        confirmación real del destinatario se perdería.
+        """
         try:
             frm = packet.get("from")
             rssi = packet.get("rxRssi")
             if frm is not None and rssi:
                 self.rssi_cache[frm] = rssi
+            dec = packet.get("decoded") or {}
+            rid = dec.get("requestId")
+            if rid is not None and dec.get("portnum") == "ROUTING_APP":
+                self.call_from_thread(self._check_ack, packet, rid)
         except Exception:
             pass
+
+    def _check_ack(self, packet, rid):
+        """Actualiza el estado de un mensaje según quién y cómo confirmó."""
+        rec = self.pending.get(rid)
+        if rec is None:
+            return
+        dec = packet.get("decoded") or {}
+        err = (dec.get("routing") or {}).get("errorReason", "NONE")
+        frm = packet.get("from")
+        dest = rec.get("dest")
+        por_mqtt = packet.get("transportMechanism") == "TRANSPORT_MQTT"
+        if err not in ("NONE", None):
+            if rec.get("status") != "delivered":
+                rec["status"] = "pending"
+        elif dest is not None and frm == dest:
+            rec["status"] = "delivered"       # ✓✓ confirmó el destinatario
+            self._outbox_remove(rec)
+            self.pending.pop(rid, None)
+        elif rec.get("status") != "delivered":
+            # confirmó el broker o un repetidor: sólo sabemos que salió
+            rec["status"] = "sent"
+        self.save_history()
+        self.refresh_current_log()
 
     def _on_node_thread(self, node=None, interface=None):
         try:

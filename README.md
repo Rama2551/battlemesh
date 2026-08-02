@@ -54,7 +54,7 @@ internet para funcionar.
 ### Opción A — paquete `.deb` (Debian / Ubuntu / Linux Mint)
 
 ```bash
-sudo apt install ./battlemesh_1.4.1_all.deb
+sudo apt install ./battlemesh_1.4.2_all.deb
 ```
 
 Deja el comando `battlemesh` en el sistema y una entrada en el menú.
@@ -94,8 +94,8 @@ Si ya estás al día, no hace nada.
 > git pull
 >
 > # si instalaste el .deb
-> curl -fsSLO https://raw.githubusercontent.com/Rama2551/battlemesh/main/battlemesh_1.4.1_all.deb
-> sudo apt install ./battlemesh_1.4.1_all.deb
+> curl -fsSLO https://raw.githubusercontent.com/Rama2551/battlemesh/main/battlemesh_1.4.2_all.deb
+> sudo apt install ./battlemesh_1.4.2_all.deb
 > ```
 
 ### Otros comandos
@@ -221,8 +221,13 @@ En canales/broadcast, ✓✓ significa que el mensaje entró en la malla (un vec
 lo retransmitió), no que cada integrante lo haya leído.
 
 > En los mensajes directos, el ✓✓ sólo aparece cuando **el propio destinatario**
-> confirma. Si el mensaje lo retransmite un repetidor pero el destino está
-> apagado o fuera de alcance, queda en ✓ — no se marca como entregado.
+> confirma. Si el mensaje lo retransmite un repetidor, o si sólo lo acusa el
+> servidor MQTT, queda en ✓ — no se marca como entregado.
+>
+> Un mismo mensaje puede generar varias confirmaciones (del broker, de un
+> repetidor y del destino). BATTLEMESH las escucha **todas**: la biblioteca de
+> Meshtastic se queda sólo con la primera, y si esa vino del broker la
+> confirmación real del destinatario se perdía.
 
 **Señal atenuada:** las barras van a color únicamente cuando el nodo está en
 línea. Si hace rato que no se lo escucha, se muestran grises: es el último valor

@@ -1,5 +1,13 @@
 # Historial de versiones
 
+## 1.4.2
+
+- **Confirmaciones de entrega más fiables**: un mensaje puede generar varias
+  confirmaciones (del servidor MQTT, de un repetidor y del destinatario). Antes
+  sólo se veía la primera —normalmente la del broker— y la real del destino se
+  descartaba. Ahora se siguen todas, y el ✓✓ aparece cuando confirma el
+  destinatario, sin importar en qué orden lleguen.
+
 ## 1.4.1
 
 - **Corregido el doble check falso**: sólo se marca ✓✓ cuando confirma el propio
