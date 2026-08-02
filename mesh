@@ -1158,7 +1158,11 @@ def self_update():
     print(f"BATTLEMESH {VERSION}")
     print(f"Buscando actualizaciones en {UPDATE_URL} …")
     try:
-        with urllib.request.urlopen(UPDATE_URL, timeout=30) as r:
+        req = urllib.request.Request(
+            UPDATE_URL,
+            headers={"Cache-Control": "no-cache", "Pragma": "no-cache",
+                     "User-Agent": f"battlemesh/{VERSION}"})
+        with urllib.request.urlopen(req, timeout=30) as r:
             nuevo = r.read().decode("utf-8")
     except Exception as e:
         print(f"✗ No pude descargar la actualización: {e}")
