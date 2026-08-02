@@ -35,6 +35,8 @@ internet para funcionar.
 - 📮 **Reenvío automático**: los DM que no llegan quedan en cola y se reintentan
   solos cuando el nodo destino vuelve a estar en línea (sobrevive a reinicios).
 - 🔎 **Buscador de nodos** por nombre, pensado para redes con muchos nodos.
+- 📶 **Presencia y calidad de enlace**: indicador de en línea / ausente y marcador
+  de señal con SNR y RSSI en dB, como en la app del teléfono.
 - 🔔 **Sonido de notificación** al recibir, activable/desactivable.
 - 📝 **Historial persistente** por conversación, con borrado individual.
 - 🖥 **Control remoto de la pantalla del nodo**: cambiá de pantalla en el OLED
@@ -90,6 +92,7 @@ battlemesh /dev/ttyUSB1   # forzar un puerto concreto
 | `Enter` | Enviar el mensaje a la conversación seleccionada |
 | `F2` | Sonido de notificación on/off (se recuerda) |
 | `F3` | Borrar historial de la conversación (confirmar con F3 otra vez) |
+| `F4` | Alternar nombres **largos** (`Aliencool`) / **cortos** (`alie`) |
 | `F5` | Refrescar la lista de nodos |
 | `F6` / `F7` | Cambiar la pantalla del nodo: ◀ anterior / ▶ siguiente |
 | `F8` | OK / entrar en la pantalla del nodo |
@@ -121,6 +124,27 @@ Abre un panel con **toda** la configuración de Meshtastic, organizada en pesta�
   y **no escribe nada** en el nodo.
 - Guarda **solo lo que cambiaste** (`Ctrl+S` o el botón *Guardar*); las demás
   secciones quedan intactas. Tras guardar, el nodo se reinicia unos segundos.
+
+### Presencia y señal de los nodos
+
+Junto a cada nodo aparece su estado y la calidad del enlace:
+
+| Indicador | Significado |
+|---|---|
+| `●` verde | En línea (escuchado hace menos de 5 min) |
+| `●` amarillo | Visto hace poco (menos de 2 h) |
+| `○` gris | **No está en línea** (el nombre se ve atenuado) |
+| `▂▄▆█` | Señal excelente · `▂▄▆▁` buena · `▂▄▁▁` regular · `▂▁▁▁` débil |
+
+Al abrir una conversación, la cabecera muestra el detalle completo, por ejemplo:
+
+```
+💬 Aliencool · no está en línea · visto hace 2 h · ▂▄▁▁ regular  SNR -13.2 dB · directo
+```
+
+El **SNR** sale de la base de nodos y el **RSSI** se toma de los paquetes que tu
+nodo va escuchando. Si le escribís a alguien que no está en línea, BATTLEMESH te
+avisa y el mensaje **queda en cola** para reenviarse cuando vuelva.
 
 ### Marcas de entrega
 
