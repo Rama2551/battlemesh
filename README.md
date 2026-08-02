@@ -49,7 +49,7 @@ internet para funcionar.
 ### Opción A — paquete `.deb` (Debian / Ubuntu / Linux Mint)
 
 ```bash
-sudo apt install ./battlemesh_1.1.0_all.deb
+sudo apt install ./battlemesh_1.1.1_all.deb
 ```
 
 Deja el comando `battlemesh` en el sistema y una entrada en el menú.
@@ -151,8 +151,29 @@ Para borrar todo el historial de una: eliminá `history.json`.
   independiente de la PC requiere un nodo router con ese módulo del firmware.
 - El **control de pantalla remoto** usa el comando `send_input_event` del
   firmware; su efecto depende de la versión y del modelo de nodo.
-- Probado sobre Heltec WiFi LoRa 32 V2 con firmware Meshtastic 2.7.x en
-  Linux Mint 22.
+## Compatibilidad de hardware
+
+Funciona con **cualquier nodo Meshtastic conectado por USB** — no está atado a un
+modelo. La configuración se genera automáticamente a partir de los protobuf de
+Meshtastic, así que se adapta al firmware que tenga cada placa.
+
+| Placa | Chip USB | Puerto típico | Detección |
+|---|---|---|---|
+| Heltec V3 / V4, Wireless Tracker | ESP32-S3 (USB nativo) | `/dev/ttyACM0` | automática |
+| Heltec V2, T-Beam, T-Lora | CP2102 / CH340 | `/dev/ttyUSB0` | automática |
+| Otros ESP32 | varios | `ttyUSB*` / `ttyACM*` | automática |
+
+Si por algún motivo no detecta la placa, siempre podés indicar el puerto a mano:
+`battlemesh /dev/ttyACM0`. Al conectar, BATTLEMESH muestra el modelo que reporta
+el nodo (por ejemplo `HELTEC_V3`), para que confirmes con cuál estás hablando.
+
+> Los nodos **nRF52** (RAK4631, T-Echo) no entran en la autodetección de la
+> librería; con esos hay que pasar el puerto manualmente.
+
+## Notas y limitaciones
+
+- Desarrollado y probado sobre Heltec WiFi LoRa 32 V2 con firmware Meshtastic
+  2.7.x en Linux Mint 22.
 
 ## Compilar el `.deb`
 

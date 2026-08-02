@@ -1019,7 +1019,20 @@ def main():
         if not found:
             splash("(buscando…)")
             print("\n   ✗ No encontré ninguna placa LoRa conectada por USB.")
-            print("     Conectala y volvé a abrir, o indicá el puerto:  battlemesh /dev/ttyUSB0")
+            try:                       # mostrar qué puertos serie hay, para ayudar
+                import serial.tools.list_ports as lp
+                otros = [(p.device, p.description) for p in lp.comports()]
+            except Exception:
+                otros = []
+            if otros:
+                print("     Puertos serie detectados:")
+                for dev, desc in otros:
+                    print(f"       {dev}  ({desc})")
+            print("     Conectá la placa, o indicá el puerto a mano, por ejemplo:")
+            print("       battlemesh /dev/ttyUSB0     (Heltec V2, T-Beam: chip CP2102/CH340)")
+            print("       battlemesh /dev/ttyACM0     (Heltec V3/V4 y otros ESP32-S3)")
+            print("     Si el puerto existe pero no abre, sumate al grupo dialout:")
+            print("       sudo usermod -aG dialout $USER   (y reiniciá sesión)")
             sys.exit(1)
         port = found[0]
         if len(found) > 1:
@@ -1041,6 +1054,8 @@ def main():
         mi = iface.getMyNodeInfo()
         my_num = mi.get("num")
         my_name = mi.get("user", {}).get("longName", "tu nodo")
+        hw = mi.get("user", {}).get("hwModel", "?")
+        print(f"   ✓ {my_name}  ·  {hw}")     # sirve para cualquier placa Meshtastic
     except Exception:
         my_num, my_name = None, "tu nodo"
 
