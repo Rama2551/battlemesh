@@ -54,7 +54,7 @@ internet para funcionar.
 ### Opción A — paquete `.deb` (Debian / Ubuntu / Linux Mint)
 
 ```bash
-sudo apt install ./battlemesh_1.4.3_all.deb
+sudo apt install ./battlemesh_1.5.0_all.deb
 ```
 
 Deja el comando `battlemesh` en el sistema y una entrada en el menú.
@@ -94,8 +94,8 @@ Si ya estás al día, no hace nada.
 > git pull
 >
 > # si instalaste el .deb
-> curl -fsSLO https://raw.githubusercontent.com/Rama2551/battlemesh/main/battlemesh_1.4.3_all.deb
-> sudo apt install ./battlemesh_1.4.3_all.deb
+> curl -fsSLO https://raw.githubusercontent.com/Rama2551/battlemesh/main/battlemesh_1.5.0_all.deb
+> sudo apt install ./battlemesh_1.5.0_all.deb
 > ```
 
 ### Otros comandos
@@ -158,6 +158,10 @@ configuración del nodo:
 | 🔒 Seguridad | Claves y permisos de administración |
 | 🧩 Módulos | MQTT, telemetría, store&forward, canned messages, sensores… |
 
+- **Todo está en castellano**: cada parámetro tiene un nombre claro y una
+  explicación de para qué sirve, tomada de la documentación oficial de
+  Meshtastic. El nombre técnico se muestra al lado, en chico, por si lo
+  necesitás para buscar en la documentación.
 - **Al abrirlo carga la configuración que el aparato tiene en ese momento.**
 - El switch **«Modo avanzado»** alterna entre los parámetros de uso corriente y
   la totalidad de los campos (~180).

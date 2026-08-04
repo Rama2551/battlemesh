@@ -59,7 +59,7 @@ if "--check" in sys.argv:
           "| meshtastic importado")
     sys.exit(0)
 
-VERSION = "1.4.3"
+VERSION = "1.5.0"
 UPDATE_URL = "https://raw.githubusercontent.com/Rama2551/battlemesh/main/mesh"
 
 ONLINE_SECS = 300      # se considera "online" si se lo escuchó hace < 5 min
@@ -292,18 +292,213 @@ STR_LIMITS = {
     "security.admin_key": 0,
 }
 
-# Ayudas cortas para los campos más importantes
-FIELD_HELP = {
-    "owner.long_name": "Nombre visible del nodo",
-    "owner.short_name": "Sigla de 4 caracteres",
-    "lora.region": "Banda legal de tu país (¡obligatorio!)",
-    "lora.modem_preset": "Alcance vs velocidad",
-    "lora.hop_limit": "Saltos máximos (1-7)",
-    "lora.tx_power": "Potencia en dBm (0 = automático)",
-    "display.screen_on_secs": "Segundos que queda encendida la pantalla",
-    "display.auto_screen_carousel_secs": "Rotar pantallas cada N seg (0 = no)",
-    "bluetooth.fixed_pin": "PIN de 6 dígitos para emparejar",
-    "device.role": "Rol del nodo en la malla",
+# Nombre en castellano y explicación de cada parámetro.
+# Basado en la documentación oficial: https://meshtastic.org/docs/configuration/
+FIELD_INFO = {
+    # ---------------- identidad ----------------
+    "owner.long_name":  ("Nombre del nodo", "Cómo te ven los demás en la malla"),
+    "owner.short_name": ("Sigla", "Hasta 4 caracteres, se muestra en la pantalla del equipo"),
+
+    # ---------------- LoRa ----------------
+    "lora.region": ("País / banda de frecuencias",
+                    "Define las frecuencias legales de tu país. En Argentina: ANZ"),
+    "lora.modem_preset": ("Perfil de radio",
+                          "Equilibrio entre alcance y velocidad. El habitual es LONG_FAST"),
+    "lora.hop_limit": ("Saltos máximos",
+                       "Cuántas veces se puede retransmitir tu mensaje (1 a 7). Habitual: 3"),
+    "lora.tx_enabled": ("Transmisión activada",
+                        "Si se apaga, el equipo sólo escucha y no emite"),
+    "lora.tx_power": ("Potencia de transmisión",
+                      "En dBm. Dejalo en 0 para usar el máximo legal de tu región"),
+    "lora.use_preset": ("Usar perfil predefinido",
+                        "Activado usa el perfil; desactivado te deja fijar ancho de banda a mano"),
+    "lora.bandwidth": ("Ancho de banda (kHz)", "Sólo si no usás perfil predefinido"),
+    "lora.spread_factor": ("Factor de dispersión",
+                           "5 a 12: más alto llega más lejos pero más lento"),
+    "lora.coding_rate": ("Corrección de errores",
+                         "5 a 8: más alto resiste mejor las interferencias, pero es más lento"),
+    "lora.channel_num": ("Número de canal", "Ranura de frecuencia dentro de la banda"),
+    "lora.frequency_offset": ("Ajuste fino de frecuencia",
+                              "Calibración del cristal. Sólo para uso avanzado"),
+    "lora.override_duty_cycle": ("Ignorar límite de emisión",
+                                 "⚠ Incumple la norma europea de tiempo de uso del aire"),
+    "lora.override_frequency": ("Frecuencia manual",
+                                "Saltea el cálculo de canal. Sólo radioaficionados con licencia"),
+    "lora.sx126x_rx_boosted_gain": ("Recepción mejorada",
+                                    "Más sensibilidad en chips SX126x, a costa de algo de consumo"),
+    "lora.pa_fan_disabled": ("Apagar ventilador",
+                             "Desactiva el ventilador del amplificador, si el equipo lo tiene"),
+    "lora.ignore_mqtt": ("Descartar lo que viene de internet",
+                         "El equipo ignora los paquetes que llegan por MQTT"),
+    "lora.config_ok_to_mqtt": ("Permitir salida a internet",
+                               "Habilita que tus paquetes se publiquen en el servidor MQTT"),
+    "lora.serial_hal_only": ("Sólo radio por serie", "Uso avanzado / depuración"),
+
+    # ---------------- pantalla ----------------
+    "display.screen_on_secs": ("Segundos de pantalla encendida",
+                               "Cuánto queda prendida tras un mensaje o un toque. 0 = 10 minutos"),
+    "display.auto_screen_carousel_secs": ("Rotar pantallas cada",
+                                          "Segundos entre pantalla y pantalla. 0 = no rota"),
+    "display.units": ("Unidades", "Sistema métrico o imperial"),
+    "display.flip_screen": ("Girar pantalla 180°",
+                            "Para cuando el equipo está montado al revés"),
+    "display.use_12h_clock": ("Reloj de 12 horas", "En vez del formato de 24 horas"),
+    "display.compass_north_top": ("Norte siempre arriba",
+                                  "Fija la brújula con el norte hacia arriba"),
+    "display.heading_bold": ("Títulos en negrita", "Mejora la lectura en modos invertidos"),
+    "display.wake_on_tap_or_motion": ("Despertar al mover o tocar",
+                                      "Enciende la pantalla con el acelerómetro"),
+    "display.oled": ("Tipo de pantalla OLED", "Dejalo en automático salvo que la cambies"),
+    "display.displaymode": ("Modo de visualización", "Estilo: normal, dos colores, invertido o color"),
+    "display.gps_format": ("Formato de coordenadas", "Cómo se muestran latitud y longitud"),
+    "display.compass_orientation": ("Orientación de la brújula", "Rotación de la brújula en pantalla"),
+    "display.use_long_node_name": ("Mostrar nombre completo", "En vez de la sigla de 4 letras"),
+    "display.enable_message_bubbles": ("Globos de mensaje", "Muestra los mensajes en burbujas"),
+
+    # ---------------- bluetooth ----------------
+    "bluetooth.enabled": ("Bluetooth activado", "Necesario para conectar el teléfono"),
+    "bluetooth.mode": ("Modo de emparejamiento",
+                       "PIN aleatorio (se ve en pantalla), PIN fijo, o sin PIN"),
+    "bluetooth.fixed_pin": ("PIN fijo", "Código de 6 dígitos para emparejar el teléfono"),
+
+    # ---------------- dispositivo ----------------
+    "device.role": ("Función del nodo",
+                    "CLIENT: uso normal · CLIENT_MUTE: no retransmite · ROUTER/REPEATER: "
+                    "infraestructura fija · TRACKER: prioriza posición · SENSOR: prioriza telemetría"),
+    "device.node_info_broadcast_secs": ("Anunciarse cada",
+                                        "Cada cuántos segundos avisa su nombre a la malla"),
+    "device.rebroadcast_mode": ("Qué retransmite",
+                                "ALL: todo · LOCAL_ONLY: sólo lo cercano · KNOWN_ONLY: sólo "
+                                "nodos conocidos · NONE: nada"),
+    "device.tzdef": ("Zona horaria", "Formato POSIX. Argentina: <-03>3"),
+    "device.button_gpio": ("Pin del botón", "Número de pin del botón de usuario"),
+    "device.buzzer_gpio": ("Pin del zumbador", "Número de pin del buzzer"),
+    "device.buzzer_mode": ("Modo del zumbador", "Cuándo suena: todo, nunca, sólo avisos o sólo directos"),
+    "device.double_tap_as_button_press": ("Doble golpe = botón",
+                                          "Usa el acelerómetro como si apretaras el botón"),
+    "device.disable_triple_click": ("Desactivar triple clic",
+                                    "El triple clic del botón enciende o apaga el GPS"),
+    "device.led_heartbeat_disabled": ("Apagar LED de actividad",
+                                      "Deja de parpadear el LED del equipo"),
+    "device.is_managed": ("Configuración bloqueada",
+                          "⚠ Impide cambiar ajustes salvo por canal de administración"),
+    "device.serial_enabled": ("Puerto serie activado", "Comunicación por USB/serie"),
+
+    # ---------------- posición ----------------
+    "position.gps_enabled": ("GPS activado", "Si el equipo tiene GPS propio"),
+    "position.gps_mode": ("Modo de GPS", "Activado, desactivado, o el equipo no tiene GPS"),
+    "position.fixed_position": ("Posición fija",
+                                "Usa unas coordenadas guardadas en vez del GPS"),
+    "position.position_broadcast_secs": ("Enviar posición cada",
+                                         "Segundos entre avisos de posición. 0 = cada 15 minutos"),
+    "position.position_broadcast_smart_enabled": ("Envío inteligente",
+                                                  "Avisa más seguido cuando el equipo se mueve"),
+    "position.broadcast_smart_minimum_distance": ("Distancia mínima (m)",
+                                                  "Metros a recorrer antes de volver a avisar"),
+    "position.broadcast_smart_minimum_interval_secs": ("Intervalo mínimo (s)",
+                                                       "Espera mínima entre avisos de posición"),
+    "position.gps_update_interval": ("Consultar GPS cada",
+                                     "Segundos entre lecturas del GPS. 0 = cada 2 minutos"),
+    "position.position_flags": ("Datos a incluir",
+                                "Qué agrega al aviso: altitud, rumbo, velocidad, satélites…"),
+    "position.rx_gpio": ("Pin RX del GPS", "Pin de recepción del módulo GPS"),
+    "position.tx_gpio": ("Pin TX del GPS", "Pin de transmisión del módulo GPS"),
+    "position.gps_en_gpio": ("Pin de encendido del GPS", "Pin que enciende o apaga el GPS externo"),
+    "position.gps_attempt_time": ("Tiempo de búsqueda", "Cuánto insiste en obtener señal GPS"),
+
+    # ---------------- energía ----------------
+    "power.is_power_saving": ("Ahorro de energía",
+                              "Apaga pantalla, Bluetooth, WiFi y serie para durar más"),
+    "power.on_battery_shutdown_after_secs": ("Apagar tras perder alimentación",
+                                             "⚠ Segundos hasta apagarse al quedar sin corriente externa"),
+    "power.wait_bluetooth_secs": ("Espera de Bluetooth", "Segundos antes de apagar el Bluetooth"),
+    "power.ls_secs": ("Sueño ligero", "Segundos de reposo con la radio activa (sólo ESP32)"),
+    "power.min_wake_secs": ("Tiempo despierto mínimo",
+                            "Cuánto se queda despierto tras recibir algo"),
+    "power.sds_secs": ("Sueño profundo", "Segundos de apagado casi total"),
+    "power.adc_multiplier_override": ("Calibración de batería",
+                                      "Ajuste del divisor de tensión (2 a 6). Requiere medir"),
+    "power.device_battery_ina_address": ("Sensor de batería externo",
+                                         "Dirección I2C del medidor, si tenés uno"),
+    "power.powermon_enables": ("Monitor de consumo", "Registro de consumo para depuración"),
+
+    # ---------------- red ----------------
+    "network.wifi_enabled": ("WiFi activado",
+                             "⚠ Al activar WiFi el equipo desactiva el Bluetooth"),
+    "network.wifi_ssid": ("Nombre de la red WiFi",
+                          "Respetá mayúsculas y minúsculas, tal cual figura"),
+    "network.wifi_psk": ("Contraseña del WiFi", "Distingue mayúsculas. Hasta 64 caracteres"),
+    "network.ntp_server": ("Servidor de hora", "Para poner el reloj en hora por internet"),
+    "network.eth_enabled": ("Ethernet activado", "Si el equipo tiene puerto de red por cable"),
+    "network.address_mode": ("Asignación de IP", "DHCP (automática) o fija"),
+    "network.rsyslog_server": ("Servidor de registro", "Envía los mensajes de log a otra máquina"),
+    "network.enabled_protocols": ("Protocolos extra", "Funciones de red adicionales"),
+    "network.ipv6_enabled": ("IPv6 activado", "Direcciones de red modernas"),
+
+    # ---------------- seguridad ----------------
+    "security.public_key": ("Clave pública", "Identidad criptográfica del equipo"),
+    "security.private_key": ("Clave privada", "⚠ Secreta: permite descifrar tus mensajes"),
+    "security.admin_key": ("Claves de administración", "Nodos autorizados a configurar éste"),
+    "security.is_managed": ("Sólo administración remota",
+                            "⚠ Bloquea los cambios locales de configuración"),
+    "security.serial_enabled": ("Consola serie", "Acceso por el puerto USB"),
+    "security.debug_log_api_enabled": ("Registro de depuración", "Sólo para diagnóstico"),
+    "security.admin_channel_enabled": ("Canal de administración",
+                                       "⚠ Permite configurar el equipo por radio"),
+
+    # ---------------- módulos frecuentes ----------------
+    "mqtt.enabled": ("MQTT activado", "Conecta la malla a internet a través de un servidor"),
+    "mqtt.address": ("Servidor MQTT", "Dirección del servidor. Público: mqtt.meshtastic.org"),
+    "mqtt.username": ("Usuario del servidor", "Del servidor público: meshdev"),
+    "mqtt.password": ("Contraseña del servidor", "Del servidor público: large4cats"),
+    "mqtt.encryption_enabled": ("Enviar cifrado", "Recomendado: publica los mensajes cifrados"),
+    "mqtt.json_enabled": ("Enviar también en JSON",
+                          "⚠ Publica los mensajes SIN cifrar, legibles por cualquiera"),
+    "mqtt.tls_enabled": ("Conexión segura (TLS)", "Si el servidor lo admite"),
+    "mqtt.root": ("Tema (topic)", "Carpeta del servidor. Para Argentina: msh/ANZ"),
+    "mqtt.proxy_to_client_enabled": ("Salir por el teléfono o la PC",
+                                     "Usa la conexión del equipo conectado en vez del WiFi propio"),
+    "mqtt.map_reporting_enabled": ("Publicar en el mapa",
+                                   "⚠ Muestra tu nodo y su posición en los mapas públicos"),
+    "telemetry.device_update_interval": ("Enviar estado del equipo cada",
+                                         "Segundos entre informes de batería y uso del canal"),
+    "telemetry.environment_measurement_enabled": ("Sensores ambientales",
+                                                  "Si tenés sensores de temperatura, humedad, etc."),
+    "telemetry.environment_update_interval": ("Enviar datos ambientales cada", "En segundos"),
+    "store_forward.enabled": ("Guardar y reenviar",
+                              "El nodo almacena mensajes para quien esté ausente (necesita PSRAM)"),
+    "store_forward.history_return_max": ("Mensajes guardados", "Cuántos mensajes conserva"),
+    "range_test.enabled": ("Prueba de alcance",
+                           "Emite mensajes de prueba para medir hasta dónde llega"),
+    "range_test.sender": ("Enviar cada", "Segundos entre mensajes de prueba. 0 = sólo recibir"),
+    "neighbor_info.enabled": ("Informe de vecinos",
+                              "Comparte qué nodos escucha, útil para mapear la red"),
+    "canned_message.enabled": ("Mensajes prearmados", "Respuestas rápidas desde el equipo"),
+    "external_notification.enabled": ("Aviso externo", "Enciende un LED o zumbador al recibir"),
+    "detection_sensor.enabled": ("Sensor de detección", "Avisa cuando un sensor se activa"),
+    "ambient_lighting.led_state": ("Luz ambiente", "Control de la tira LED, si tenés una"),
+    "paxcounter.enabled": ("Contador de personas",
+                           "Cuenta dispositivos WiFi/Bluetooth cercanos"),
+    "audio.codec2_enabled": ("Audio por radio", "Voz comprimida, requiere hardware específico"),
+    "remote_hardware.enabled": ("Control de pines remoto",
+                                "⚠ Permite manejar los pines del equipo desde la malla"),
+    "serial.enabled": ("Puente serie", "Envía por la malla lo que entra por el puerto serie"),
+}
+
+# Compatibilidad: sólo la explicación
+FIELD_HELP = {k: v[1] for k, v in FIELD_INFO.items()}
+
+SECTION_NAMES = {
+    "lora": "Radio LoRa", "display": "Pantalla", "bluetooth": "Bluetooth",
+    "device": "Dispositivo", "position": "Posición y GPS", "power": "Energía",
+    "network": "Red (WiFi / Ethernet)", "security": "Seguridad",
+    "mqtt": "MQTT — puente a internet", "telemetry": "Telemetría — datos del equipo",
+    "store_forward": "Guardar y reenviar", "range_test": "Prueba de alcance",
+    "neighbor_info": "Información de vecinos", "canned_message": "Mensajes prearmados",
+    "external_notification": "Aviso externo (LED / zumbador)", "serial": "Puente serie",
+    "detection_sensor": "Sensor de detección", "ambient_lighting": "Luz ambiente",
+    "paxcounter": "Contador de personas", "audio": "Audio por radio",
+    "remote_hardware": "Control remoto de pines",
 }
 
 NUM_TYPES = {"uint32", "int32", "uint64", "int64", "float", "double", "fixed32", "sfixed32"}
@@ -340,8 +535,8 @@ class ConfigScreen(Screen):
     #cfg-top { height: 3; padding: 0 1; background: $accent; color: $text; }
     #cfg-top Label { padding: 1 2 0 0; }
     .row { height: 3; padding: 0 1; }
-    .row Label { width: 34; padding: 1 1 0 0; }
-    .row Input, .row Select { width: 42; }
+    .row Label { width: 46; padding: 1 1 0 0; }
+    .row Input, .row Select { width: 38; }
     .row Switch { width: 12; }
     .help { color: $text-muted; padding: 1 0 0 1; }
     .adv-hidden { display: none; }
@@ -402,7 +597,7 @@ class ConfigScreen(Screen):
             desc = section_descriptor(kind, section)
             if desc is None:
                 continue
-            yield Static(f"[b]{section}[/b]")
+            yield Static(f"[b]{SECTION_NAMES.get(section, section)}[/b]")
             any_field = False
             for f in desc.fields:
                 t = pb_type_name(f)
@@ -455,8 +650,8 @@ class ConfigScreen(Screen):
         self.widgets[key] = ("owner", "owner", fname, w)
         self.originals[key] = val
         classes = "row" if key in BASIC_FIELDS else "row adv"
-        help_txt = FIELD_HELP.get(key, "")
-        lbl = f"{label}" + (f"  [dim](máx {limit})[/dim]" if limit else "")
+        nombre, help_txt = FIELD_INFO.get(key, (label, ""))
+        lbl = nombre + (f"  [dim]máx {limit}[/dim]" if limit else "")
         row = Horizontal(Label(lbl), w, Static(help_txt, classes="help"), classes=classes)
         yield row
 
@@ -483,9 +678,14 @@ class ConfigScreen(Screen):
                       id=wid)
         self.widgets[key] = (kind, section, f.name, w)
         classes = "row" if key in BASIC_FIELDS else "row adv"
-        help_txt = FIELD_HELP.get(key, "")
+        nombre, help_txt = FIELD_INFO.get(key, (None, ""))
         limit = STR_LIMITS.get(key)
-        lbl = f.name + (f"  [dim](máx {limit})[/dim]" if limit else "")
+        if nombre:                       # etiqueta en castellano + nombre técnico chiquito
+            lbl = f"{nombre}  [dim]({f.name})[/dim]"
+        else:
+            lbl = f.name
+        if limit:
+            lbl += f"  [dim]máx {limit}[/dim]"
         return Horizontal(Label(lbl), w, Static(help_txt, classes="help"), classes=classes)
 
     def on_mount(self):

@@ -1,5 +1,13 @@
 # Historial de versiones
 
+## 1.5.0
+
+- **Panel de configuración en castellano**: los parámetros dejan de mostrarse con
+  su nombre técnico (`screen_on_secs`, `hop_limit`…) y pasan a tener un nombre
+  claro y una explicación de qué hacen, tomada de la documentación oficial de
+  Meshtastic. El nombre técnico queda visible en chico, para poder buscarlo.
+- Títulos de sección traducidos y avisos ⚠ en las opciones delicadas.
+
 ## 1.4.3
 
 - **Corregida la presencia**: un nodo con el que estabas chateando podía figurar
